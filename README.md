@@ -47,7 +47,7 @@ And for the pipeline around the query (details in [Pipeline tools](#pipeline-too
 ## Quick start (2 minutes, no warehouse needed)
 
 ```bash
-pip install git+https://github.com/laaielichter/gulliver
+pip install gulliver-mcp
 gulliver demo                       # creates gulliver_demo.duckdb with 5M events
 export GULLIVER_DSN=gulliver_demo.duckdb
 
@@ -80,13 +80,13 @@ Gulliver is an MCP server (stdio or Streamable HTTP). Until it is on PyPI, run i
 [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uvx --from git+https://github.com/laaielichter/gulliver gulliver-mcp --dsn path/to/warehouse.duckdb
+uvx gulliver-mcp --dsn path/to/warehouse.duckdb
 ```
 
 **Claude Code**
 
 ```bash
-claude mcp add gulliver -- uvx --from git+https://github.com/laaielichter/gulliver gulliver-mcp --dsn /abs/path/data.duckdb
+claude mcp add gulliver -- uvx gulliver-mcp --dsn /abs/path/data.duckdb
 ```
 
 Or install it as a plugin (MCP server + skill):
@@ -103,7 +103,7 @@ Or install it as a plugin (MCP server + skill):
   "mcpServers": {
     "gulliver": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/laaielichter/gulliver", "gulliver-mcp", "--config", "/abs/path/gulliver.toml"]
+      "args": ["gulliver-mcp", "--config", "/abs/path/gulliver.toml"]
     }
   }
 }
@@ -114,7 +114,7 @@ Or install it as a plugin (MCP server + skill):
 ```toml
 [mcp_servers.gulliver]
 command = "uvx"
-args = ["--from", "git+https://github.com/laaielichter/gulliver", "gulliver-mcp", "--config", "/abs/path/gulliver.toml"]
+args = ["gulliver-mcp", "--config", "/abs/path/gulliver.toml"]
 ```
 
 **Gemini CLI** (`~/.gemini/settings.json`): same `mcpServers` block as above.
