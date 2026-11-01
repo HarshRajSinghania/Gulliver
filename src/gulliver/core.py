@@ -133,10 +133,29 @@ def lint_sql(sql: str, dialect: str = "duckdb") -> dict[str, Any]:
     findings = lint(statement.select, dialect)
     counts = summarize(findings)
     state = "block" if counts["error"] else ("warn" if counts["warn"] else "ok")
-    return {"status": state, "statement": statement.public(), "lint": [f.as_dict() for f in findings],
-            "counts": counts,
-            "next_step": ("Fix the errors listed in lint." if counts["error"] else
-                          "Call gulliver_preflight against a connection for cost and size.")}
+    result = {"status": state, "statement": statement.public(), "lint": [f.as_dict() for f in findings],
+              "counts": counts,
+              "next_step": ("Fix the errors listed in lint." if counts["error"] else
+                            "Call gulliver_preflight against a connection for cost and size.")}
+    _attach_autofix(result, sql, dialect, None)
+    return result
+
+
+def _attach_autofix(result: dict[str, Any], sql: str, dialect: str, table_info: dict[str, dict] | None) -> None:
+    """When a result-preserving rewrite exists, hand the agent the fixed SQL right away (no extra call)."""
+    from .fixer import rewrite
+
+    try:
+        out = rewrite(sql, dialect, mode="safe", table_info=table_info)
+    except Exception:  # an autofix hint must never break preflight or lint
+        return
+    if not out.get("changes"):
+        return
+    result["autofix"] = {"fixed_sql": out["fixed_sql"], "same_result": True,
+                         "rules": sorted({c["rule"] for c in out["changes"]}),
+                         "changes": out["changes"]}
+    result["next_step"] = (result.get("next_step", "") + " autofix.fixed_sql returns exactly the same rows and avoids "
+                           "the " + ", ".join(result["autofix"]["rules"]) + " problem; prefer it.").strip()
 
 
 # -- preflight -------------------------------------------------------------------------
@@ -230,6 +249,8 @@ def _preflight_core(settings: Settings, sql: str, connection: str | None) -> dic
     )
     if table_notes:
         base["notes"] = table_notes
+    if findings:
+        _attach_autofix(base, sql, dialect, {k: v.as_dict(with_columns=True) for k, v in infos.items()})
     return base
 
 

@@ -29,6 +29,8 @@ Workflow:
 1. gulliver_status: connections, budget, money spent today.
 2. gulliver_inspect: which tables are big, their columns and partitions.
 3. gulliver_preflight: cost/bytes estimate + scale lint for your SQL. Read status and next_step.
+   If the result has `autofix`, use autofix.fixed_sql: it returns exactly the same rows and is cheaper.
+   gulliver_fix rewrites SQL on request and shows the saving before vs after.
 4. gulliver_rehearse: when preflight says needs_rehearsal (or you are unsure), runs your SQL on 1%, 3%, 10% samples
    and predicts the full run (runtime, rows, money) with a confidence level.
 5. gulliver_run: runs the full query only inside the budget. It may answer needs_rehearsal or needs_approval
@@ -103,6 +105,25 @@ def build_server() -> Any:
             return core.lint_sql(sql, dialect)
         except Exception as exc:
             return {"status": "error", "error": str(exc), "next_step": "Check the SQL and dialect."}
+
+    @server.tool(name="gulliver_fix", annotations=READ_ONLY,
+                 description="Rewrite SQL so it is cheaper on big data (e.g. DATE(ts) = '...' becomes a range on ts "
+                             "so partitions are pruned) and say per change whether the rows stay exactly the same. "
+                             "With a connection it estimates before vs after (no data read). mode='all' adds "
+                             "rewrites that change the result on purpose (LIMIT, approx count, UNION ALL, NOT EXISTS).")
+    def gulliver_fix(
+        sql: SQL,
+        connection: CONNECTION = None,
+        dialect: Annotated[Literal["duckdb", "postgres", "bigquery", "snowflake"] | None,
+                           Field(description="SQL dialect. Omit to use the connection's dialect.")] = None,
+        mode: Annotated[Literal["safe", "all"], Field(description="safe: only rewrites that keep exactly the same "
+                                                                  "rows. all: also result-changing rewrites.")] = "safe",
+        limit: Annotated[int | None, Field(description="Row limit to add in mode 'all' when the result is "
+                                                       "unbounded.", ge=1)] = None,
+    ) -> dict[str, Any]:
+        from .fixer import fix
+
+        return _guard(fix, sql, connection=connection, dialect=dialect, mode=mode, limit=limit)
 
     @server.tool(name="gulliver_preflight", annotations=READ_ONLY,
                  description="Estimate bytes, rows and money for a query WITHOUT running it, plus scale lint and the "
