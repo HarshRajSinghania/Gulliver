@@ -1,0 +1,42 @@
+{
+  "name": "gulliver-mcp",
+  "version": "0.1.0",
+  "description": "Test on tiny data before you run on giant data. npm launcher for the Gulliver MCP server and CLI (runs the Python package gulliver-mcp via uv).",
+  "license": "MIT",
+  "author": "laaielichter",
+  "homepage": "https://github.com/laaielichter/Gulliver#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/laaielichter/Gulliver.git",
+    "directory": "npm"
+  },
+  "bugs": {
+    "url": "https://github.com/laaielichter/Gulliver/issues"
+  },
+  "mcpName": "io.github.laaielichter/gulliver",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "ai-agents",
+    "data-engineering",
+    "sql",
+    "duckdb",
+    "bigquery",
+    "snowflake",
+    "postgres",
+    "cost-optimization",
+    "llm"
+  ],
+  "bin": {
+    "gulliver-mcp": "bin/gulliver-mcp.js",
+    "gulliver": "bin/gulliver.js"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
