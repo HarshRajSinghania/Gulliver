@@ -375,6 +375,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md).
 See [AGENTS.md](AGENTS.md) for the agent-facing guide and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
