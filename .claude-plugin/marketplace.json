@@ -1,0 +1,15 @@
+{
+  "name": "gulliver",
+  "owner": { "name": "laaielichter" },
+  "metadata": {
+    "description": "Gulliver: a dress rehearsal for data agents."
+  },
+  "plugins": [
+    {
+      "name": "gulliver",
+      "source": "./",
+      "description": "Preflight cost, scale lint, rehearse on samples, predict the full run and run SQL inside a budget.",
+      "version": "0.1.0"
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+"""Decide what a SQL statement is allowed to do before anything runs.
+
+Gulliver is read-first. It understands three kinds of statements:
+
+  read   SELECT / WITH ... SELECT / set operations   -> may be estimated, rehearsed, run
+  write  CREATE TABLE ... AS SELECT, INSERT ... SELECT -> the SELECT part is estimated and
+         rehearsed (rehearsals never write); a real run needs allow_write=True
+  block  everything else (DELETE, UPDATE, DROP, TRUNCATE, ALTER, MERGE, GRANT, several
+         statements at once, unparsable SQL)               -> refused
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+
+import sqlglot
+from sqlglot import exp
+from sqlglot.errors import ParseError
+
+READ_ROOTS = (exp.Select, exp.Union, exp.Intersect, exp.Except, exp.Subquery)
+
+
+@dataclass
+class Statement:
+    sql: str
+    dialect: str
+    kind: str                      # "read" | "write" | "block"
+    reason: str = ""
+    tree: exp.Expression | None = None
+    select: exp.Expression | None = None   # the read part (for write statements too)
+    target: str | None = None              # write target table
+    tables: list[str] = field(default_factory=list)
+
+    @property
+    def sql_hash(self) -> str:
+        return sql_fingerprint(self.select.sql(dialect=self.dialect) if self.select is not None else self.sql)
+
+    def public(self) -> dict:
+        out = {"kind": self.kind, "tables": self.tables}
+        if self.reason:
+            out["reason"] = self.reason
+        if self.target:
+            out["write_target"] = self.target
+        return out
+
+
+def sql_fingerprint(sql: str) -> str:
+    normalized = " ".join(sql.split()).rstrip(";").lower()
+    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
+
+
+def _strip_trailing(sql: str) -> str:
+    return sql.strip().rstrip(";").strip()
+
+
+def base_tables(tree: exp.Expression, dialect: str) -> list[exp.Table]:
+    """Physical tables (and table functions such as read_parquet) referenced by a query.
+
+    CTE names are excluded, as are write targets.
+    """
+    cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
+    out: list[exp.Table] = []
+    for table in tree.find_all(exp.Table):
+        name = table.name.lower() if isinstance(table.this, exp.Identifier) else ""
+        if name and name in cte_names and not table.args.get("db") and not table.args.get("catalog"):
+            continue
+        out.append(table)
+    return out
+
+
+def table_ref(table: exp.Table, dialect: str) -> str:
+    """The table reference without its alias, as SQL text for the dialect."""
+    bare = table.copy()
+    bare.set("alias", None)
+    for key in ("sample", "joins", "laterals", "pivots", "hints"):
+        if key in bare.args:
+            bare.set(key, None)
+    return bare.sql(dialect=dialect)
+
+
+def classify(sql: str, dialect: str = "duckdb") -> Statement:
+    text = _strip_trailing(sql)
+    if not text:
+        return Statement(sql, dialect, "block", reason="Empty SQL.")
+    try:
+        trees = [t for t in sqlglot.parse(text, read=dialect) if t is not None]
+    except ParseError as exc:
+        first = str(exc).splitlines()[0] if str(exc) else "parse error"
+        return Statement(sql, dialect, "block", reason=f"Could not parse SQL for dialect '{dialect}': {first}")
+    if len(trees) != 1:
+        return Statement(sql, dialect, "block", reason="Send exactly one statement at a time.")
+    tree = trees[0]
+
+    if isinstance(tree, READ_ROOTS):
+        if any(isinstance(node, (exp.Insert, exp.Delete, exp.Update, exp.Create, exp.Drop)) for node in tree.walk()):
+            return Statement(sql, dialect, "block", reason="Data-changing statement nested inside a query.", tree=tree)
+        if any(isinstance(node, exp.Select) and node.args.get("into") for node in tree.walk()):
+            return Statement(sql, dialect, "block", reason="SELECT ... INTO writes a table; use CREATE TABLE ... AS SELECT.",
+                             tree=tree)
+        return Statement(sql, dialect, "read", tree=tree, select=tree,
+                         tables=[table_ref(t, dialect) for t in base_tables(tree, dialect)])
+
+    if isinstance(tree, exp.Create):
+        kind = str(tree.args.get("kind") or "").upper()
+        source = tree.expression
+        if kind in ("TABLE", "VIEW") and isinstance(source, READ_ROOTS):
+            target = tree.this
+            target_table = target.this if isinstance(target, exp.Schema) else target
+            target_name = target_table.sql(dialect=dialect) if target_table is not None else None
+            return Statement(sql, dialect, "write", tree=tree, select=source, target=target_name,
+                             tables=[table_ref(t, dialect) for t in base_tables(source, dialect)])
+        return Statement(sql, dialect, "block", tree=tree,
+                         reason="Only CREATE TABLE/VIEW ... AS SELECT is supported; other DDL is refused.")
+
+    if isinstance(tree, exp.Insert):
+        source = tree.expression
+        if isinstance(source, READ_ROOTS):
+            target = tree.this
+            target_table = target.this if isinstance(target, exp.Schema) else target
+            return Statement(sql, dialect, "write", tree=tree, select=source,
+                             target=target_table.sql(dialect=dialect) if target_table is not None else None,
+                             tables=[table_ref(t, dialect) for t in base_tables(source, dialect)])
+        return Statement(sql, dialect, "block", tree=tree, reason="INSERT without a SELECT is refused.")
+
+    label = type(tree).__name__.upper()
+    return Statement(sql, dialect, "block", tree=tree,
+                     reason=f"{label} statements are refused. Gulliver only rehearses and runs reads "
+                            "and CREATE/INSERT ... SELECT.")

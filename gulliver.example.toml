@@ -1,0 +1,38 @@
+# Copy to gulliver.toml (or point GULLIVER_CONFIG at it).
+# Credentials never go here: each engine reads its own environment variables / credential chain.
+
+default_connection = "local"
+
+[connections.local]
+engine = "duckdb"
+path = "warehouse.duckdb"
+# allow_write = true        # a human must set this before CREATE/INSERT ... SELECT can run
+
+[connections.bq]
+dsn = "bigquery://my-gcp-project?location=EU"   # auth: gcloud auth application-default login
+dataset = "analytics"                           # used by `inspect` without a table
+price_per_tib_usd = 6.25                        # on-demand price
+
+[connections.sf]
+engine = "snowflake"
+account = "myorg-myaccount"
+user = "ANALYST"
+warehouse = "ANALYTICS_XS"
+database = "PROD"
+schema = "PUBLIC"
+credits_per_hour = 1        # XS=1, S=2, M=4, L=8 ...
+credit_usd = 3.00
+# password from SNOWFLAKE_PASSWORD, or authenticator = "externalbrowser"
+
+[connections.pg]
+dsn = "postgresql://analyst@db.internal:5432/app"   # password from PGPASSWORD or ~/.pgpass
+
+[budget]
+max_query_usd = 1.00          # hard stop for one query
+approval_over_usd = 0.25      # above this a human runs: gulliver approve <receipt_id>
+rehearse_over_usd = 0.10      # above this a rehearsal is required before the full run
+rehearse_over_bytes = 10737418240   # 10 GiB: same rule for free engines / unknown cost
+max_bytes = 536870912000      # 500 GiB: hard stop on estimated scan
+max_runtime_s = 900
+day_usd = 10.00               # total per calendar day (UTC), from the local ledger
+max_output_rows = 200         # rows handed back to the agent as a preview
