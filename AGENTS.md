@@ -10,6 +10,7 @@ real table (DuckDB, BigQuery, Snowflake or Postgres), especially when you do not
 | `gulliver_status` | `gulliver status --json` | see connections, budget limits and money spent today |
 | `gulliver_inspect` | `gulliver inspect [table] --json` | find the big tables, partitions and columns (free) |
 | `gulliver_lint` | `gulliver lint "SQL" --json` | check SQL for scale problems without a database |
+| `gulliver_fix` | `gulliver fix "SQL" --json` | rewrite SQL to be cheaper; each change says if the rows stay the same |
 | `gulliver_preflight` | `gulliver preflight "SQL" --json` | estimate bytes, rows and money without running |
 | `gulliver_rehearse` | `gulliver rehearse "SQL" --json` | run on 1%, 3%, 10% samples and predict the full run |
 | `gulliver_run` | `gulliver run "SQL" --json` | run the full query inside the budget |
@@ -25,7 +26,8 @@ real table (DuckDB, BigQuery, Snowflake or Postgres), especially when you do not
 
 1. `gulliver_inspect` once per task, so you know which tables are big and how they are partitioned.
 2. Write the SQL. Select only the columns you need. Filter on the partition column. Aggregate before returning rows.
-3. `gulliver_preflight`. Read `status` and `next_step`.
+3. `gulliver_preflight`. Read `status` and `next_step`. If the result has `autofix`, use `autofix.fixed_sql`
+   (exactly the same rows, cheaper) and preflight that instead.
 4. If `next_step` asks for it (or the estimate is large or only `heuristic`), `gulliver_rehearse`.
 5. `gulliver_run` with the exact same SQL. The preview has at most `max_output_rows` rows; `actual.rows` is the total.
 6. Offer `gulliver_receipt` to the human.

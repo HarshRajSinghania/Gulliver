@@ -26,12 +26,17 @@ Gulliver sits between the agent and the warehouse:
 | Step | Tool | What happens |
 |---|---|---|
 | 1 | `gulliver_inspect` | Which tables are big? Rows, bytes, partitions, columns. Metadata only, free. |
-| 2 | `gulliver_preflight` | Bytes, rows and money **before** running, plus **scale lint** (12 rules) and the budget gate. |
+| 2 | `gulliver_preflight` | Bytes, rows and money **before** running, plus **scale lint** (12 rules) and the budget gate. When a safe rewrite exists, the answer already contains the fixed SQL (`autofix`). |
 | 3 | `gulliver_rehearse` | Runs the query on 1%, 3% and 10% samples, fits a growth curve and **predicts the full run** with a confidence range. Catches joins that multiply rows. |
 | 4 | `gulliver_run` | Runs the full query only inside the budget. Otherwise answers `needs_rehearsal` or `needs_approval`. |
 | 5 | `gulliver_receipt` | Markdown proof for the human: what was estimated, rehearsed, approved and run, and predicted vs actual. |
 
 Every answer has a `status` and a `next_step`, so even small models know what to do next.
+
+Gulliver does not only say no. `gulliver_fix` **rewrites the SQL for the agent** and labels every change.
+`same` (exactly the same rows) is only claimed when Gulliver has checked the column types on the connection;
+everything else (`assumes`, `nulls`, `changes`) needs `mode=all` and says what may differ. With a connection it
+estimates the old and the new query side by side, so nobody has to trust the saving blindly.
 
 And for the pipeline around the query (details in [Pipeline tools](#pipeline-tools)):
 
@@ -279,6 +284,42 @@ All checks become one aggregate query (one scan), budget-gated like any other. S
 when a check fails, so it drops into CI or an orchestrator. Row-count history is kept per target, so
 `--max-change` catches a load that suddenly lost half its rows.
 
+## Auto-fix
+
+```bash
+gulliver fix "select event_type, count(*) from events where date(ts) = '2025-01-02' group by 1"
+```
+
+```
+GV005 [returns exactly the same rows]
+  before: CAST(ts AS DATE) = '2025-01-02'
+  after:  ts >= '2025-01-02' AND ts < '2025-01-03'
+  why:    Filters the raw column ts by range, so partitions, indexes and min/max statistics can skip data. ts is TIMESTAMP, so the rows are the same.
+```
+
+| Rewrite | Rule | Guarantee | Default |
+|---|---|---|---|
+| `DATE(ts) = d`, `ts::date`, `TO_DATE(ts)`, `DATE_TRUNC(day/month/year, ts)`, `YEAR(ts)`, `EXTRACT(YEAR ...)` with `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` → a range on the raw column | GV005 | `same` when the connection shows the column is a DATE or a TIMESTAMP without time zone | yes |
+| the same, when the column type is unknown | GV005 | `assumes` (same rows only if it is such a column) | `mode=all` |
+| `a.x NOT IN (SELECT y ...)` → `NOT EXISTS` | GV012 | `nulls`: same rows unless the subquery returns NULL | `mode=all` |
+| `COUNT(DISTINCT x)` → approximate distinct count | GV007 | `changes` (approximate) | `mode=all` |
+| `UNION` → `UNION ALL` | GV009 | `changes` (keeps duplicates) | `mode=all` |
+| unbounded `SELECT` → `LIMIT n` | GV002 | `changes` (fewer rows) | `mode=all` |
+
+`same` is a promise, so Gulliver keeps it narrow. It never rewrites a date filter on text columns,
+`TIMESTAMP WITH TIME ZONE` (a day can start twice when the clocks change at midnight), intervals, `TRY_` and
+`BETWEEN SYMMETRIC` variants, filters with a time-zone or format argument, or periods that run past year 9999.
+A column only counts as typed when it clearly comes from one table with metadata, not from a CTE or subquery
+that could redefine it. Every `same` rewrite is tested against real data: DATE and TIMESTAMP columns, NULLs,
+`infinity`, the last microsecond of a day and leap days.
+
+What it will not do: guess a date range for a missing partition filter (GV004) or a join key for a
+cartesian join (GV003). Those need a decision, so they stay in `remaining`.
+
+Where it pays off: Postgres cannot use a plain index or range partitions on `ts` for `ts::date = ...`, and
+BigQuery, Snowflake and Parquet readers prune best on the raw column. DuckDB already optimizes this case on its
+own tables, so there the estimate stays the same.
+
 ## Scale lint rules
 
 | Rule | Name | Severity |
@@ -304,6 +345,7 @@ when a check fails, so it drops into CI or an orchestrator. Row-count history is
 gulliver status                       connections, budget, spend today
 gulliver inspect [TABLE]              biggest tables, or one table's columns
 gulliver lint SQL [--dialect D]       scale lint only
+gulliver fix SQL [--dialect D] [--mode safe|all] [--limit N]   rewrite SQL, say what changes
 gulliver preflight SQL                estimate + lint + gate, no execution
 gulliver rehearse SQL [--fractions 0.01,0.03,0.1] [--sample largest|all] [--method auto|system|bernoulli]
 gulliver run SQL [--max-rows N] [--allow-write]

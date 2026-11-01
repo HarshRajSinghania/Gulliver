@@ -64,6 +64,20 @@ def _print_human(result: dict[str, Any]) -> None:
             print(f"  {c['name']:30} {c['type']}")
         print(f"\nnext: {result.get('next_step', '')}")
         return
+    if "fixed_sql" in result:
+        changes = result.get("changes") or []
+        if not changes:
+            print("Nothing to rewrite automatically.")
+        for c in changes:
+            print(f"{c['rule']} [{c['meaning']}]\n  before: {c['before']}\n  after:  {c['after']}\n  why:    {c['note']}")
+        if changes:
+            print("\n-- fixed SQL\n" + result["fixed_sql"])
+        if (result.get("saving") or {}).get("summary"):
+            print("\nsaving: " + result["saving"]["summary"])
+        for item in result.get("remaining") or []:
+            print(f"still: {item['severity']} {item['rule']} {item['name']}: {item['fix']}")
+        print(f"\nnext: {result.get('next_step', '')}")
+        return
     if "lint" in result and "counts" in result:
         if not result["lint"]:
             print("No scale problems found.")
@@ -158,6 +172,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("lint", help="Scale lint only (no database needed)")
     _add_sql_args(p)
     p.add_argument("--dialect", default=None, help="duckdb, postgres, bigquery or snowflake")
+
+    p = sub.add_parser("fix", help="Rewrite SQL to be cheaper, and say if the rows stay exactly the same")
+    _add_sql_args(p)
+    p.add_argument("--dialect", default=None, help="duckdb, postgres, bigquery or snowflake (default: connection's)")
+    p.add_argument("--mode", choices=["safe", "all"], default="safe",
+                   help="safe: same rows only (default). all: also LIMIT, approx count, UNION ALL, NOT EXISTS")
+    p.add_argument("--limit", type=int, default=None, help="Row limit to add in --mode all")
 
     p = sub.add_parser("preflight", help="Estimate cost and size without running")
     _add_sql_args(p)
@@ -285,6 +306,18 @@ def main(argv: list[str] | None = None) -> int:
                 except ConfigError:
                     dialect = "duckdb"
             return _emit(core.lint_sql(_read_sql(args), dialect), args.json)
+
+        if args.command == "fix":
+            from .fixer import fix
+
+            try:
+                settings = load_settings(config_path=args.config, dsn=args.dsn)
+            except ConfigError:
+                if not args.dialect:
+                    raise
+                settings = None
+            return _emit(fix(settings, _read_sql(args), connection=args.connection, dialect=args.dialect,
+                             mode=args.mode, limit=args.limit), args.json)
 
         if args.command in ("lineage", "impact"):
             from . import features

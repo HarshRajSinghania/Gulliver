@@ -16,7 +16,8 @@ available; otherwise the CLI `gulliver <command> --json` returns the same JSON.
 2. **Write lean SQL.** Only the columns you need (no `SELECT *` on wide tables), a filter on the partition
    column, joins on keys, aggregate before returning rows.
 3. **Preflight.** `gulliver_preflight` gives bytes, rows and money without running, plus scale lint.
-   Every result has `status` and `next_step`; follow `next_step`.
+   Every result has `status` and `next_step`; follow `next_step`. When the result has `autofix`, switch to
+   `autofix.fixed_sql`: it returns exactly the same rows and avoids the lint problem.
 4. **Rehearse when asked or unsure.** `gulliver_rehearse` runs the query on 1%, 3% and 10% samples of the
    largest table and predicts the full run with a range. Look at `prediction.*.exponent`: above 1.3 means the
    query grows faster than the data (usually a join that multiplies rows). Fix that before running.
@@ -40,6 +41,11 @@ available; otherwise the CLI `gulliver <command> --json` returns the same JSON.
 Partitioned tables need a `where` with a partition filter for `gulliver_check`, like any other query.
 
 ## Fixes for common lint findings
+
+`gulliver_fix` rewrites GV005 date filters with a same-rows guarantee when it knows the column type from the
+connection. `mode=all` adds rewrites that need an assumption or change the result (GV005 on unknown types,
+GV012, GV007, GV009, GV002). Only call a result "the same" when `same_result` is true; otherwise tell the human
+what changed and verify with `gulliver_diff`.
 
 | Rule | Fix |
 |---|---|
