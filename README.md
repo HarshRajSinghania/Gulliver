@@ -33,6 +33,17 @@ Gulliver sits between the agent and the warehouse:
 
 Every answer has a `status` and a `next_step`, so even small models know what to do next.
 
+And for the pipeline around the query (details in [Pipeline tools](#pipeline-tools)):
+
+| Tool | Problem it solves |
+|---|---|
+| `gulliver_impact` | "If I change or drop this column, what breaks?" Column-level lineage over SQL models or a dbt manifest. |
+| `gulliver_drift` | Schema changed under you: columns removed, retyped or added since the last snapshot, plus the models they break. |
+| `gulliver_diff` | "Does my refactored / migrated / incremental model return the same rows?" Key-based data diff inside the engine, also across engines. |
+| `gulliver_translate` | SQL between DuckDB, Postgres, BigQuery and Snowflake, with warnings and an optional preflight on the target. |
+| `gulliver_incremental` | A model rebuilds everything every run. Is incremental safe, what is the SQL / dbt config, and how many rows does it skip? |
+| `gulliver_check` | Data quality in one cheap scan: unique keys, not null, accepted values, ranges, freshness, row-count jumps. |
+
 ## Quick start (2 minutes, no warehouse needed)
 
 ```bash
@@ -61,7 +72,7 @@ Growth exponent output_rows: 1.77 -> grows faster than the data
 ```
 
 Add `--json` to any command for machine-readable output. Exit codes: `0` ok, `1` error, `2` blocked,
-`3` needs rehearsal or approval, so it also works as a CI check.
+`3` needs rehearsal or approval, `4` a data check failed, so it also works as a CI check.
 
 ## Use it from your agent (MCP)
 
@@ -120,7 +131,7 @@ args = ["--from", "git+https://github.com/laaielichter/gulliver", "gulliver-mcp"
 | DuckDB (files, Parquet, CSV, in-memory) | EXPLAIN + metadata (heuristic) | `TABLESAMPLE` system/bernoulli, seeded | free (time is the budget) | tested in CI |
 | BigQuery | dry run: **exact** bytes | `TABLESAMPLE SYSTEM` | on-demand $/TiB, plus a hard `maximum_bytes_billed` cap | beta, tested with fakes |
 | Snowflake | `EXPLAIN USING JSON`: bytes and partitions (upper bound) | `SAMPLE SYSTEM ... SEED` | warehouse credits x runtime | beta, tested with fakes |
-| PostgreSQL | `EXPLAIN (FORMAT JSON)` (heuristic) | `TABLESAMPLE ... REPEATABLE` | self-hosted (time and bytes are the budget) | beta, tested with fakes |
+| PostgreSQL | `EXPLAIN (FORMAT JSON)` (heuristic), partition-aware sizes | `TABLESAMPLE ... REPEATABLE` | self-hosted (time and bytes are the budget) | tested in CI against a live Postgres 16 |
 
 Install the drivers you need: `pip install "gulliver-mcp[bigquery]"`, `[snowflake]`, `[postgres]` or `[all]`.
 Every estimate says how much to trust it: `exact`, `upper_bound` or `heuristic`. A heuristic is never called exact.
@@ -185,6 +196,89 @@ By default only the **largest** table is sampled and the others stay complete, w
 when that matters. Extrapolating 10x always has uncertainty; Gulliver shows it instead of hiding it. Databricks,
 ClickHouse and Spark are not supported yet.
 
+## Pipeline tools
+
+These reuse the same connections, budget gate and receipts. Every query they run is generated, parsed,
+estimated and gated like your own queries.
+
+### Impact: what breaks if a column changes
+
+```bash
+gulliver impact raw.events.amount --models models/        # or --manifest target/manifest.json
+```
+```
+Changing raw.events.amount affects 4 model(s):
+  stg_events: amount  <- raw.events.amount
+    fct_revenue: revenue  <- stg_events.amount
+    user_ltv: ltv  <- stg_events.amount
+      country_report: revenue  <- fct_revenue.revenue
+```
+
+Plain `*.sql` files and dbt models (`{{ ref() }}`, `{{ source() }}`, `{{ config() }}`, `{% if %}`) both work.
+Columns used only in filters or joins are reported too, and `SELECT *` models are flagged because their shape
+follows the source. `gulliver lineage --models models/` prints the whole graph.
+
+### Drift: schema changes since last time
+
+```bash
+gulliver snapshot                          # remember tables, columns and row counts
+gulliver drift --models models/            # later: what changed, and which models it breaks
+gulliver drift --save                      # accept the new schema
+```
+
+Removed and retyped columns are `warn` and are mapped to impacted models; row counts that move more than 20%
+are listed too.
+
+### Diff: prove two queries return the same rows
+
+```bash
+gulliver diff --left "select * from fct_orders" --right "select * from fct_orders_v2" --key order_id
+gulliver diff --left orders --right orders --key id -c postgres_prod --right-connection snowflake_new
+```
+
+Each side is reduced inside its engine to 256 buckets of (row count, sum of MD5 row hashes) keyed by the key's
+hash, so it scales to billions of rows and costs about one scan per side. Only buckets that differ are opened
+(with a finer second pass when they are big) to list keys that are missing, extra or changed. MD5 is the same on
+every engine, so you can diff across engines; values are compared as text, so cast or round in your queries where
+engines format numbers or timestamps differently. Use it after a refactor, a migration or an incremental switch.
+
+### Translate: SQL between dialects
+
+```bash
+gulliver translate --from snowflake --to bigquery -f model.sql
+gulliver translate --from duckdb --to postgres --check -c pg "select ..."   # also preflight on the target
+```
+
+Functions the translator does not know are copied as-is and listed as warnings, so nothing is silently wrong.
+
+### Incremental: stop rebuilding everything
+
+```bash
+gulliver incremental -f models/user_ltv.sql --time-column ts --unique-key user_id --period 1d
+```
+
+| Strategy | When | What it generates |
+|---|---|---|
+| `append` | no aggregation | read only rows newer than the target's max (merge on `unique_key` for late updates) |
+| `partition_overwrite` | grouped by a time grain | dbt `microbatch` config: recompute the recent periods (+ lookback) |
+| `merge_recompute` | grouped (or windowed) by an entity key | recompute only the keys that got new rows, merge on the key |
+| `not_safe` | LIMIT, totals over everything, windows without PARTITION BY | keeps the full rebuild and says why |
+
+It also measures the saving on the real source ("each run would read about 172,800 of 5,000,000 rows, 96.5% fewer")
+and, on billed engines, compares dry-run bytes, telling you when you need to partition or cluster the source to
+turn fewer rows into less money. Prove the result with `gulliver diff`.
+
+### Check: data quality in one scan
+
+```bash
+gulliver check events --unique event_id --not-null user_id,amount \
+  --accepted "event_type=view|click|cart|buy" --range "amount=0:10000" --fresh ts=24h --max-change 30
+```
+
+All checks become one aggregate query (one scan), budget-gated like any other. Status `fail` (exit code 4)
+when a check fails, so it drops into CI or an orchestrator. Row-count history is kept per target, so
+`--max-change` catches a load that suddenly lost half its rows.
+
 ## Scale lint rules
 
 | Rule | Name | Severity |
@@ -216,9 +310,18 @@ gulliver run SQL [--max-rows N] [--allow-write]
 gulliver receipt [ID|latest] [--format markdown|json]
 gulliver approve ID [--note TEXT]     (human only)
 gulliver demo [PATH]                  create a demo DuckDB database
+gulliver lineage --models DIR | --manifest FILE
+gulliver impact TABLE[.COLUMN] --models DIR | --manifest FILE
+gulliver snapshot | drift [--models DIR] [--save]
+gulliver diff --left SQL --right SQL --key k1,k2 [--right-connection NAME] [--columns a,b]
+gulliver translate SQL --to D [--from D] [--check]
+gulliver incremental SQL [--time-column C] [--unique-key K] [--period 1d] [--lookback 1]
+gulliver check TARGET [--where W] [--unique K] [--not-null C] [--accepted C=a|b] [--range C=min:max] [--fresh C=24h] [--min-rows N] [--max-change PCT]
 gulliver tools --format mcp|openai|gemini
 gulliver mcp [--http]                 start the MCP server
 ```
+
+Exit codes: `0` ok, `1` error, `2` blocked, `3` needs rehearsal or approval, `4` a data check failed.
 
 SQL can be an argument, `-f file.sql`, or `-` for stdin. Global flags: `--dsn`, `--config`, `-c NAME`, `--json`.
 

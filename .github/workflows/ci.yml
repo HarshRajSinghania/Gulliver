@@ -13,6 +13,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "ruff>=0.6"
+      - run: ruff check .
+
   test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -36,4 +49,32 @@ jobs:
         run: |
           gulliver demo smoke.duckdb --events 200000
           gulliver --dsn smoke.duckdb --json preflight "select country, count(*) from users group by 1"
+          gulliver --dsn smoke.duckdb check events --unique event_id --not-null user_id
           gulliver tools --format openai
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gv
+          POSTGRES_PASSWORD: gv
+          POSTGRES_DB: gv
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gv" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      GULLIVER_TEST_PG_DSN: postgresql://gv@localhost:5432/gv
+      PGPASSWORD: gv
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev,postgres]"
+      - name: Live Postgres tests
+        run: python -m pytest -q tests/test_postgres_live.py -rs

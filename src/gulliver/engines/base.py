@@ -141,5 +141,26 @@ class Engine(ABC):
             best = min(best, time.perf_counter() - start)
         return best if best != float("inf") else 0.0
 
+    # -- portable SQL pieces for data-diff and checks ---------------------------------
+    #: SQL type name for text casts
+    text_type = "VARCHAR"
+
+    def text(self, expr: str) -> str:
+        """Expression as text, NULL shown as a fixed marker (so NULL and '' differ)."""
+        return f"COALESCE(CAST({expr} AS {self.text_type}), '<gv-null>')"
+
+    def md5_int(self, text_expr: str) -> str:
+        """First 7 hex digits of MD5(text) as an integer (0..268435455). Same value on every engine."""
+        return f"CAST(('0x' || SUBSTR(MD5({text_expr}), 1, 7)) AS BIGINT)"
+
+    def quote(self, name: str) -> str:
+        import sqlglot.expressions as e
+
+        return e.to_identifier(name, quoted=True).sql(dialect=self.dialect)
+
+    def query_columns(self, sql: str) -> list[str]:
+        """Output column names of a query without reading data."""
+        return self.execute(f"SELECT * FROM ({sql}) AS gv_q LIMIT 0", preview_rows=0).columns
+
     def describe(self) -> dict[str, Any]:
         return {"engine": self.name, "dialect": self.dialect, "billed": self.billed, "read_only": self.read_only}

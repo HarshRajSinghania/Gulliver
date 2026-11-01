@@ -5,7 +5,8 @@ from gulliver.cli import main
 from gulliver.mcp_server import build_server, export_tools
 
 TOOLS = {"gulliver_status", "gulliver_inspect", "gulliver_lint", "gulliver_preflight", "gulliver_rehearse",
-         "gulliver_run", "gulliver_receipt"}
+         "gulliver_run", "gulliver_receipt", "gulliver_impact", "gulliver_drift", "gulliver_translate",
+         "gulliver_diff", "gulliver_incremental", "gulliver_check"}
 
 
 def test_cli_status_json_after_command(demo_db, state, capsys):

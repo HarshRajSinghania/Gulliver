@@ -1,6 +1,6 @@
 """Command line: the same workflow as the MCP tools, with --json for agents and scripts.
 
-Exit codes: 0 ok/warn/skipped, 1 error, 2 block, 3 needs_rehearsal / needs_approval.
+Exit codes: 0 ok/warn/skipped, 1 error, 2 block, 3 needs_rehearsal / needs_approval, 4 a data check failed.
 """
 
 from __future__ import annotations
@@ -14,7 +14,8 @@ from typing import Any
 from . import __version__, core
 from .config import ConfigError, load_settings
 
-EXIT = {"ok": 0, "warn": 0, "skipped": 0, "error": 1, "block": 2, "needs_rehearsal": 3, "needs_approval": 3}
+EXIT = {"ok": 0, "warn": 0, "skipped": 0, "error": 1, "block": 2, "needs_rehearsal": 3, "needs_approval": 3,
+        "fail": 4}
 
 
 def _read_sql(args: argparse.Namespace) -> str:
@@ -69,6 +70,37 @@ def _print_human(result: dict[str, Any]) -> None:
         for item in result["lint"]:
             print(f"{item['severity']:5} {item['rule']} {item['name']}: {item['message']}\n      fix: {item['fix']}")
         print(f"\nnext: {result.get('next_step', '')}")
+        return
+    if "affected" in result:
+        target = result.get("target", {})
+        name = target.get("table", "") + (f".{target['column']}" if target.get("column") else "")
+        print(f"Changing {name} affects {result['count']} model(s):")
+        for a in result["affected"]:
+            cols = ", ".join(a["columns"]) or "(whole model / filters)"
+            star = " [SELECT *]" if a.get("select_star") else ""
+            print(f"  {'  ' * (a['depth'] - 1)}{a['model']}: {cols}{star}  <- {', '.join(a['via'])}")
+        print(f"\nnext: {result.get('next_step', '')}")
+        return
+    if "strategy" in result:
+        print(f"Strategy: {result['strategy']}")
+        for r in result.get("reasons") or []:
+            print(f"  reason: {r}")
+        for n in result.get("notes") or []:
+            print(f"  note: {n}")
+        if result.get("incremental_sql"):
+            print("\n-- incremental SQL\n" + result["incremental_sql"])
+        if result.get("dbt_model"):
+            print("\n-- dbt model\n" + result["dbt_model"])
+        if result.get("savings"):
+            print("\nsavings: " + (result["savings"].get("summary") or json.dumps(result["savings"])))
+        print(f"\nnext: {result.get('next_step', '')}")
+        return
+    if "to" in result and "sql" in result and "from" in result:
+        print(result["sql"])
+        for w in result.get("warnings") or []:
+            print(f"-- warning: {w}")
+        if result.get("check"):
+            print(f"-- check on target: {result['check'].get('status')} {result['check'].get('error') or ''}")
         return
     print(json.dumps(result, indent=2, default=str))
 
@@ -156,6 +188,57 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--overwrite", action="store_true")
     p.add_argument("--events", type=int, default=5_000_000)
 
+    def models_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--models", help="Folder with SQL models (*.sql, dbt-style refs allowed)")
+        p.add_argument("--manifest", help="dbt target/manifest.json")
+        p.add_argument("--dialect", default=None, help="duckdb, postgres, bigquery or snowflake")
+
+    p = sub.add_parser("lineage", help="Model graph and column lineage of a folder of SQL models")
+    models_args(p)
+
+    p = sub.add_parser("impact", help="What breaks downstream if a table or column changes")
+    p.add_argument("target", help="table or table.column, e.g. raw.events.user_id")
+    models_args(p)
+
+    sub.add_parser("snapshot", help="Save the connection's schema (tables, columns, rows) for drift checks")
+
+    p = sub.add_parser("drift", help="Schema changes since the last snapshot (and the models they break)")
+    models_args(p)
+    p.add_argument("--save", action="store_true", help="Accept the current schema as the new snapshot")
+
+    p = sub.add_parser("translate", help="Translate SQL between dialects")
+    _add_sql_args(p)
+    p.add_argument("--to", required=True, dest="to_dialect", choices=["duckdb", "postgres", "bigquery", "snowflake"])
+    p.add_argument("--from", dest="from_dialect", default="duckdb",
+                   choices=["duckdb", "postgres", "bigquery", "snowflake"])
+    p.add_argument("--check", action="store_true", help="Preflight the result on the connection (-c)")
+
+    p = sub.add_parser("diff", help="Do two queries or tables return the same rows?")
+    p.add_argument("--left", required=True, help="Query or table name")
+    p.add_argument("--right", required=True, help="Query or table name")
+    p.add_argument("--key", required=True, help="Key column(s), comma-separated")
+    p.add_argument("--right-connection", help="Connection for the right side, if different")
+    p.add_argument("--columns", help="Only compare these columns (comma-separated)")
+
+    p = sub.add_parser("incremental", help="Can this full-rebuild model be incremental? Generates the SQL")
+    _add_sql_args(p)
+    p.add_argument("--time-column")
+    p.add_argument("--unique-key", help="Comma-separated")
+    p.add_argument("--period", default="1d", help="Run interval / recompute window, e.g. 1d, 1h")
+    p.add_argument("--lookback", type=int, default=1)
+    p.add_argument("--no-savings", action="store_true", help="Do not query the source to measure savings")
+
+    p = sub.add_parser("check", help="Data quality checks in one scan (exit code 4 when a check fails)")
+    p.add_argument("target", help="Table name or a SELECT")
+    p.add_argument("--where")
+    p.add_argument("--unique", action="append", help="Key that must be unique; 'a,b' for composite (repeatable)")
+    p.add_argument("--not-null", action="append", help="Comma-separated columns (repeatable)")
+    p.add_argument("--accepted", action="append", help="col=a|b|c (repeatable)")
+    p.add_argument("--range", action="append", dest="ranges", help="col=min:max (repeatable)")
+    p.add_argument("--fresh", action="append", help="col=24h (repeatable)")
+    p.add_argument("--min-rows", type=int)
+    p.add_argument("--max-change", type=float, help="Max %% row-count change since the last check")
+
     p = sub.add_parser("tools", help="Print tool definitions for MCP, OpenAI or Gemini function calling")
     p.add_argument("--format", choices=["mcp", "openai", "gemini"], default="mcp")
 
@@ -203,8 +286,47 @@ def main(argv: list[str] | None = None) -> int:
                     dialect = "duckdb"
             return _emit(core.lint_sql(_read_sql(args), dialect), args.json)
 
+        if args.command in ("lineage", "impact"):
+            from . import features
+
+            dialect = args.dialect or "duckdb"
+            if args.command == "lineage":
+                return _emit(features.lineage_overview(args.models, args.manifest, dialect), args.json)
+            return _emit(features.impact(args.target, args.models, args.manifest, dialect), args.json)
+        if args.command == "translate" and not args.check:
+            from . import features
+
+            return _emit(features.translate(None, _read_sql(args), args.to_dialect, args.from_dialect), args.json)
+
         settings = load_settings(config_path=args.config, dsn=args.dsn)
         conn = args.connection
+        if args.command in ("snapshot", "drift", "translate", "diff", "incremental", "check"):
+            from . import features
+
+            def csv(text: str | None) -> list[str] | None:
+                return [c.strip() for c in text.split(",") if c.strip()] if text else None
+
+            if args.command == "snapshot":
+                result = features.snapshot(settings, conn)
+            elif args.command == "drift":
+                result = features.drift(settings, conn, args.models, args.manifest, save=args.save)
+            elif args.command == "translate":
+                result = features.translate(settings, _read_sql(args), args.to_dialect, args.from_dialect,
+                                            connection=conn or settings.default_connection)
+            elif args.command == "diff":
+                result = features.diff(settings, args.left, args.right, csv(args.key) or [], connection=conn,
+                                       right_connection=args.right_connection, columns=csv(args.columns))
+            elif args.command == "incremental":
+                result = features.incremental(settings, _read_sql(args), connection=conn,
+                                              time_column=args.time_column, unique_key=csv(args.unique_key),
+                                              period=args.period, lookback=args.lookback,
+                                              estimate_savings=not args.no_savings)
+            else:
+                result = features.check(settings, args.target, connection=conn, where=args.where,
+                                        unique=args.unique, not_null=args.not_null, accepted=args.accepted,
+                                        ranges=args.ranges, fresh=args.fresh, min_rows=args.min_rows,
+                                        max_change_pct=args.max_change)
+            return _emit(result, args.json)
         if args.command == "status":
             result = core.status(settings)
         elif args.command == "inspect":

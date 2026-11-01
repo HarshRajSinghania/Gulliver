@@ -1,0 +1,20 @@
+name: Feature request
+description: A new engine, lint rule, check or workflow
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What goes wrong or costs too much today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed solution
+  - type: textarea
+    id: example
+    attributes:
+      label: Example SQL or data
+      render: sql

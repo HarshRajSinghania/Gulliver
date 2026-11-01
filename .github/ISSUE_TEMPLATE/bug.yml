@@ -1,0 +1,29 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command or tool call, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The JSON or error (remove credentials and private data).
+      render: json
+  - type: input
+    id: engine
+    attributes:
+      label: Engine and versions
+      placeholder: "duckdb 1.x / bigquery / snowflake / postgres 16, gulliver 0.1.0, python 3.12"
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: How do you use Gulliver
+      options: [CLI, MCP (Claude), MCP (other client), Python import]

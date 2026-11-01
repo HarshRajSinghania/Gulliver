@@ -115,5 +115,25 @@ def render_markdown(rec: dict[str, Any]) -> str:
                 lines.append(f"| {key} | {c['predicted']} | {c['actual']} | {c['ratio']} |")
             lines.append("")
 
+    if rec.get("checks"):
+        lines += ["## Data quality checks", "", "| Check | Column | Result | Detail |", "|---|---|---|---|"]
+        for c in rec["checks"]:
+            detail = ", ".join(f"{k}={v}" for k, v in c.items() if k not in ("check", "column", "passed"))
+            lines.append(f"| {c['check']} | {c.get('column') or ''} | {'pass' if c.get('passed') else 'FAIL'} | "
+                         f"{detail} |")
+        lines.append("")
+
+    if rec.get("action") == "diff":
+        lines += ["## Data diff", "",
+                  f"- Left `{rec.get('left_connection')}`: {rec.get('left_rows', '?'):,} rows",
+                  f"- Right `{rec.get('right_connection')}`: {rec.get('right_rows', '?'):,} rows",
+                  f"- Key: {', '.join(rec.get('key') or [])}; columns compared: "
+                  f"{', '.join(rec.get('columns_compared') or [])}",
+                  f"- Identical: {'yes' if rec.get('identical') else 'no'}"]
+        for kind, data in (rec.get("differences") or {}).items():
+            if data.get("count"):
+                lines.append(f"- {kind.replace('_', ' ')}: {data['count']} (e.g. {', '.join(data['sample'][:5])})")
+        lines.append("")
+
     lines += [f"**Next step:** {rec.get('next_step', '')}", ""]
     return "\n".join(lines)

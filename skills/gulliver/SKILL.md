@@ -1,6 +1,6 @@
 ---
 name: gulliver
-description: Check SQL before running it on big data. Estimates cost and bytes, lints for scale problems, rehearses the query on 1%/3%/10% samples and predicts the full run, then runs it inside a budget with a receipt. Use whenever you are about to run SQL you wrote on DuckDB, BigQuery, Snowflake or Postgres tables that may be large, when someone asks "will this query be expensive", "how big is this table", "is this join safe", "dry run this", "rehearse", "preflight", "budget for queries", or in Dutch "is deze query duur", "test eerst op een klein stukje data", "hoeveel kost deze query".
+description: Check SQL before running it on big data, and keep data pipelines safe. Estimates cost, lints for scale problems, rehearses on 1%/3%/10% samples and predicts the full run, runs inside a budget with a receipt; also column-level impact of schema changes, schema drift, data-diff between queries or engines, SQL translation, incremental-model advice and data quality checks. Use whenever you run SQL you wrote on DuckDB, BigQuery, Snowflake or Postgres tables that may be large, or work on dbt/SQL models - "will this query be expensive", "is this join safe", "what breaks if I drop this column", "are these two tables the same", "make this model incremental", "check this table for duplicates", "migrate this SQL to BigQuery", or in Dutch "is deze query duur", "test eerst op een klein stukje data", "wat breekt er als ik deze kolom verander", "klopt de data nog".
 ---
 
 # Gulliver: test on tiny data before you run on giant data
@@ -25,6 +25,19 @@ available; otherwise the CLI `gulliver <command> --json` returns the same JSON.
    or disguise a query to get under a limit: the limits are the human's decision.
 6. **Prove it.** Offer `gulliver_receipt` (markdown) so the human sees estimate, rehearsal, approval and the
    predicted-versus-actual numbers.
+
+## Pipeline work
+
+| Situation | Tool | Report |
+|---|---|---|
+| About to change, rename or drop a column or table | `gulliver_impact` (models folder or dbt manifest) | every affected model and column, deepest last |
+| Refactored a model, migrated it, or made it incremental | `gulliver_diff` old vs new, with the key | "identical" only when `identical` is true; else the sample keys |
+| A model rebuilds all history every run | `gulliver_incremental` | strategy, generated SQL / dbt config, rows saved; then prove it with `gulliver_diff` |
+| Moving SQL to another engine | `gulliver_translate` (with a target connection to preflight it) | the SQL plus every warning |
+| Before trusting a table, or after a load | `gulliver_check` (unique, not null, accepted, range, fresh) | which checks failed; status `fail` means do not use the data as-is |
+| Pipeline broke, or a weekly health check | `gulliver_drift` with the models folder | removed/retyped columns and the models they break |
+
+Partitioned tables need a `where` with a partition filter for `gulliver_check`, like any other query.
 
 ## Fixes for common lint findings
 

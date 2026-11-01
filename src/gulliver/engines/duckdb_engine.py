@@ -229,7 +229,7 @@ class DuckDBEngine(Engine):
                         break
                     if len(preview) < preview_rows:
                         for row in batch[: preview_rows - len(preview)]:
-                            preview.append({c: _jsonable(v) for c, v in zip(columns, row)})
+                            preview.append({c: _jsonable(v) for c, v in zip(columns, row, strict=False)})
                     total += len(batch)
         except Exception as exc:
             if timed_out["hit"]:

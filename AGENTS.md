@@ -14,6 +14,12 @@ real table (DuckDB, BigQuery, Snowflake or Postgres), especially when you do not
 | `gulliver_rehearse` | `gulliver rehearse "SQL" --json` | run on 1%, 3%, 10% samples and predict the full run |
 | `gulliver_run` | `gulliver run "SQL" --json` | run the full query inside the budget |
 | `gulliver_receipt` | `gulliver receipt latest` | give the human proof of what happened |
+| `gulliver_impact` | `gulliver impact table.column --models DIR` | see which models and columns a change breaks |
+| `gulliver_drift` | `gulliver drift --models DIR` | see schema changes since the last snapshot and what they break |
+| `gulliver_diff` | `gulliver diff --left Q --right Q --key id` | prove two queries/tables return the same rows |
+| `gulliver_translate` | `gulliver translate SQL --to bigquery` | move SQL between DuckDB, Postgres, BigQuery, Snowflake |
+| `gulliver_incremental` | `gulliver incremental SQL --time-column ts` | make a full-rebuild model incremental, with the saving |
+| `gulliver_check` | `gulliver check table --unique id ...` | data quality in one scan (status `fail` if a check fails) |
 
 ## The loop
 
@@ -23,6 +29,17 @@ real table (DuckDB, BigQuery, Snowflake or Postgres), especially when you do not
 4. If `next_step` asks for it (or the estimate is large or only `heuristic`), `gulliver_rehearse`.
 5. `gulliver_run` with the exact same SQL. The preview has at most `max_output_rows` rows; `actual.rows` is the total.
 6. Offer `gulliver_receipt` to the human.
+
+## Pipeline work
+
+- Before changing or dropping a column in a model or source: `gulliver_impact` with the models folder.
+- After refactoring a model, migrating it to another engine or making it incremental: `gulliver_diff` between the
+  old and the new query with the key. Say "identical" only when `identical` is true.
+- When a model rebuilds everything each run: `gulliver_incremental`; present the strategy, the SQL and the saving,
+  and verify with `gulliver_diff`.
+- Before trusting a table or after a load: `gulliver_check` (unique keys, not null, freshness). On partitioned
+  tables pass `where` with a partition filter.
+- Periodically, or when a pipeline breaks: `gulliver_drift` with the models folder.
 
 ## Status values
 
@@ -34,6 +51,7 @@ real table (DuckDB, BigQuery, Snowflake or Postgres), especially when you do not
 | `needs_rehearsal` | big enough that a rehearsal is required | call `gulliver_rehearse` with the same SQL |
 | `needs_approval` | costs more than the auto-approve limit | tell the human the `receipt_id`; they run `gulliver approve <id>` |
 | `skipped` | rehearsal not useful (tiny data) | call `gulliver_run` |
+| `fail` | a data quality check failed | report which checks failed; do not use the data as if it were fine |
 | `error` | engine or config problem | read `error`, fix, retry once |
 
 ## Reading a rehearsal

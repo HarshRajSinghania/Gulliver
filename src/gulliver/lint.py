@@ -70,11 +70,7 @@ def _has_aggregation(select: exp.Select) -> bool:
 
 
 def _is_star_projection(node: exp.Expression) -> bool:
-    if isinstance(node, exp.Star):
-        return True
-    if isinstance(node, exp.Column) and isinstance(node.this, exp.Star):
-        return True
-    return False
+    return isinstance(node, exp.Star) or (isinstance(node, exp.Column) and isinstance(node.this, exp.Star))
 
 
 def _join_condition(join: exp.Join) -> exp.Expression | None:

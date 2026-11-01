@@ -1,17 +1,32 @@
 {
   "name": "gulliver",
   "version": "0.1.0",
-  "description": "Test on tiny data before you run on giant data: preflight cost, scale lint, rehearse on 1% -> 10% samples, predict the full run and run inside a budget. MCP server + skill.",
-  "author": { "name": "laaielichter" },
+  "description": "Test on tiny data before you run on giant data: preflight cost, scale lint, rehearse on 1% -> 10% samples and run inside a budget; plus impact, drift, data-diff, translate, incremental advice and quality checks. MCP server + skill.",
+  "author": {
+    "name": "laaielichter"
+  },
   "homepage": "https://github.com/laaielichter/gulliver",
   "repository": "https://github.com/laaielichter/gulliver",
   "license": "MIT",
-  "keywords": ["sql", "data-engineering", "cost", "duckdb", "bigquery", "snowflake", "postgres", "mcp"],
+  "keywords": [
+    "sql",
+    "data-engineering",
+    "cost",
+    "duckdb",
+    "bigquery",
+    "snowflake",
+    "postgres",
+    "mcp"
+  ],
   "skills": "./skills/",
   "mcpServers": {
     "gulliver": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/laaielichter/gulliver", "gulliver-mcp"]
+      "args": [
+        "--from",
+        "git+https://github.com/laaielichter/gulliver",
+        "gulliver-mcp"
+      ]
     }
   }
 }

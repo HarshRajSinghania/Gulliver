@@ -42,7 +42,7 @@ class Budget:
     max_output_rows: int = 200           # rows handed back to the agent
 
     @classmethod
-    def from_mapping(cls, data: dict[str, Any]) -> "Budget":
+    def from_mapping(cls, data: dict[str, Any]) -> Budget:
         known = {f.name for f in fields(cls)}
         unknown = set(data) - known
         if unknown:

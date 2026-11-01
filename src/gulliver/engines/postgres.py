@@ -57,7 +57,10 @@ class PostgresEngine(Engine):
 
     # -- metadata ------------------------------------------------------------------
     _TABLES_SQL = """
-        SELECT n.nspname, c.relname, GREATEST(c.reltuples, 0)::bigint, pg_total_relation_size(c.oid),
+        SELECT n.nspname, c.relname, GREATEST(c.reltuples, 0)::bigint,
+               CASE WHEN c.relkind = 'p'
+                    THEN (SELECT COALESCE(SUM(pg_total_relation_size(p.relid)), 0) FROM pg_partition_tree(c.oid) p)
+                    ELSE pg_total_relation_size(c.oid) END,
                CASE WHEN c.relkind = 'p' THEN pg_get_partkeydef(c.oid) END, c.relkind
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE c.relkind IN ('r', 'p', 'm') AND NOT c.relispartition
@@ -137,7 +140,7 @@ class PostgresEngine(Engine):
                         if not batch:
                             break
                         for row in batch[: max(0, preview_rows - len(preview))]:
-                            preview.append({c: _jsonable(v) for c, v in zip(columns, row)})
+                            preview.append({c: _jsonable(v) for c, v in zip(columns, row, strict=False)})
                         total += len(batch)
         except Exception as exc:
             raise EngineError(str(exc).splitlines()[0]) from exc
@@ -149,6 +152,11 @@ class PostgresEngine(Engine):
                     pass
         return ExecResult(columns=columns, preview=preview, rows=total,
                           elapsed_s=time.perf_counter() - start, cost_usd=0.0, truncated=total > len(preview))
+
+    text_type = "TEXT"
+
+    def md5_int(self, text_expr: str) -> str:
+        return f"(('x' || SUBSTR(MD5({text_expr}), 1, 7))::bit(28)::bigint)"
 
     def sample_clause(self, fraction: float, seed: int, method: str) -> str:
         from ..sampling import percent_text

@@ -35,6 +35,14 @@ Workflow:
    (a human approves with `gulliver approve <receipt_id>`; you cannot approve yourself).
 6. gulliver_receipt: markdown proof of what was estimated, rehearsed, approved and run.
 
+More tools for pipelines:
+- gulliver_impact: which models/columns break if a table or column changes (lineage over SQL models / dbt).
+- gulliver_drift: schema changes since the last snapshot, and the models they break.
+- gulliver_diff: prove two queries/tables return the same rows (after a refactor, migration or incremental change).
+- gulliver_translate: SQL between DuckDB, Postgres, BigQuery and Snowflake.
+- gulliver_incremental: turn a full-rebuild model into an incremental one, with the rows it saves.
+- gulliver_check: data quality (unique, not null, accepted values, range, freshness, row count) in one scan.
+
 Every result has `status` and `next_step`. Follow next_step. Status block means: do not try to work around it,
 change the SQL. Only SELECT, and CREATE/INSERT ... SELECT (when a human enabled writes), are accepted."""
 
@@ -140,7 +148,113 @@ def build_server() -> Any:
     ) -> dict[str, Any]:
         return _guard(core.get_receipt, receipt_id, fmt=format)
 
+    _register_feature_tools(server)
     return server
+
+
+DIALECT = Annotated[Literal["duckdb", "postgres", "bigquery", "snowflake"], Field(description="SQL dialect.")]
+MODELS = Annotated[str | None, Field(description="Folder with SQL models (*.sql, dbt-style refs allowed). "
+                                                 "Use an absolute path.")]
+MANIFEST = Annotated[str | None, Field(description="Path to a dbt target/manifest.json (alternative to models_dir).")]
+COLS = Annotated[list[str] | None, Field(description="Column names.")]
+
+
+def _register_feature_tools(server: Any) -> None:
+    from . import features
+
+    @server.tool(name="gulliver_impact", annotations=READ_ONLY,
+                 description="Blast radius: which downstream models and columns use a table or table.column "
+                             "(column-level lineage over a folder of SQL models or a dbt manifest). Without a "
+                             "target it returns the model graph. No database needed.")
+    def gulliver_impact(
+        target: Annotated[str | None, Field(description="Table or table.column, e.g. 'raw.events.user_id'.")] = None,
+        models_dir: MODELS = None,
+        manifest: MANIFEST = None,
+        dialect: DIALECT = "duckdb",
+    ) -> dict[str, Any]:
+        try:
+            if not target:
+                return features.lineage_overview(models_dir, manifest, dialect)
+            return features.impact(target, models_dir, manifest, dialect)
+        except Exception as exc:
+            return {"status": "error", "error": str(exc), "next_step": "Check the models path."}
+
+    @server.tool(name="gulliver_drift", annotations=RUNS_QUERIES,
+                 description="Schema drift: compare the connection's tables and columns with the last snapshot "
+                             "(the first call takes the snapshot). With models it also lists the models that the "
+                             "removed or retyped columns break.")
+    def gulliver_drift(
+        connection: CONNECTION = None,
+        models_dir: MODELS = None,
+        manifest: MANIFEST = None,
+        save: Annotated[bool, Field(description="Accept the current schema as the new snapshot.")] = False,
+    ) -> dict[str, Any]:
+        return _guard(features.drift, connection=connection, models_dir=models_dir, manifest=manifest, save=save)
+
+    @server.tool(name="gulliver_translate", annotations=READ_ONLY,
+                 description="Translate SQL between DuckDB, Postgres, BigQuery and Snowflake, with warnings for "
+                             "anything that may not carry over. With a connection of the target dialect it also "
+                             "preflights the result there.")
+    def gulliver_translate(
+        sql: SQL,
+        to_dialect: DIALECT,
+        from_dialect: DIALECT = "duckdb",
+        connection: CONNECTION = None,
+    ) -> dict[str, Any]:
+        if connection:
+            return _guard(features.translate, sql, to_dialect, from_dialect, connection)
+        return features.translate(None, sql, to_dialect, from_dialect)
+
+    @server.tool(name="gulliver_diff", annotations=RUNS_QUERIES,
+                 description="Data diff: do two queries or tables return the same rows? Compares by key inside the "
+                             "engine (hashed buckets, scales to billions of rows), then lists sample keys that are "
+                             "missing, extra or changed. Sides may be on different connections. Budget-gated.")
+    def gulliver_diff(
+        left: Annotated[str, Field(description="Left query or table name (e.g. the current model).")],
+        right: Annotated[str, Field(description="Right query or table name (e.g. the refactored model).")],
+        key: Annotated[list[str], Field(description="Column(s) that identify a row.")],
+        connection: CONNECTION = None,
+        right_connection: Annotated[str | None, Field(description="Connection for the right side, if different.")] = None,
+        columns: COLS = None,
+    ) -> dict[str, Any]:
+        return _guard(features.diff, left, right, key, connection=connection, right_connection=right_connection,
+                      columns=columns)
+
+    @server.tool(name="gulliver_incremental", annotations=RUNS_QUERIES,
+                 description="Incremental advisor: can a model that rebuilds everything each run be incremental? "
+                             "Classifies it (append, partition_overwrite, merge_recompute, not_safe), generates the "
+                             "incremental SQL and dbt config, and measures how many rows a run would skip.")
+    def gulliver_incremental(
+        sql: Annotated[str, Field(description="The model's SELECT (dbt Jinja allowed).")],
+        connection: CONNECTION = None,
+        time_column: Annotated[str | None, Field(description="Column that tells which rows are new, e.g. 'ts'.")] = None,
+        unique_key: COLS = None,
+        period: Annotated[str, Field(description="How often it runs / the recompute window, e.g. '1d', '1h'.")] = "1d",
+        lookback: Annotated[int, Field(description="Extra periods to recompute for late data.", ge=0)] = 1,
+    ) -> dict[str, Any]:
+        return _guard(features.incremental, sql, connection=connection, time_column=time_column,
+                      unique_key=unique_key, period=period, lookback=lookback)
+
+    @server.tool(name="gulliver_check", annotations=RUNS_QUERIES,
+                 description="Data quality checks in one cheap aggregate scan: unique keys, not-null, accepted "
+                             "values, numeric ranges, freshness and row count (change since the last check). "
+                             "status 'fail' means a check failed.")
+    def gulliver_check(
+        target: Annotated[str, Field(description="Table name or a SELECT to check.")],
+        connection: CONNECTION = None,
+        where: Annotated[str | None, Field(description="Optional filter, e.g. \"ts >= '2026-01-01'\" (needed on "
+                                                       "partitioned tables).")] = None,
+        unique: Annotated[list[str] | None, Field(description="Keys that must be unique; 'a,b' for a composite key.")] = None,
+        not_null: COLS = None,
+        accepted: Annotated[list[str] | None, Field(description="'column=a|b|c' allowed values.")] = None,
+        ranges: Annotated[list[str] | None, Field(description="'column=min:max' (either side may be empty).")] = None,
+        fresh: Annotated[list[str] | None, Field(description="'column=24h': newest value must be at most this old.")] = None,
+        min_rows: Annotated[int | None, Field(description="Fail when fewer rows.", ge=0)] = None,
+        max_change_pct: Annotated[float | None, Field(description="Fail when the row count moved more than this "
+                                                                  "percent since the last check.", ge=0)] = None,
+    ) -> dict[str, Any]:
+        return _guard(features.check, target, connection=connection, where=where, unique=unique, not_null=not_null,
+                      accepted=accepted, ranges=ranges, fresh=fresh, min_rows=min_rows, max_change_pct=max_change_pct)
 
 
 def tool_schemas() -> list[dict[str, Any]]:

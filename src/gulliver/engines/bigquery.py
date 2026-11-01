@@ -132,7 +132,7 @@ class BigQueryEngine(Engine):
             for row in result:
                 if len(preview) < preview_rows:
                     values = list(row.values()) if hasattr(row, "values") else list(row)
-                    preview.append({c: _jsonable(v) for c, v in zip(columns, values)})
+                    preview.append({c: _jsonable(v) for c, v in zip(columns, values, strict=False)})
                 total += 1
         except Exception as exc:
             raise EngineError(_bq_error(exc)) from exc
@@ -148,6 +148,18 @@ class BigQueryEngine(Engine):
 
     def supported_methods(self) -> tuple[str, ...]:
         return ("system",)
+
+    text_type = "STRING"
+
+    def md5_int(self, text_expr: str) -> str:
+        return f"CAST(CONCAT('0x', SUBSTR(TO_HEX(MD5({text_expr})), 1, 7)) AS INT64)"
+
+    def query_columns(self, sql: str) -> list[str]:
+        try:
+            job = self.client.query(sql, job_config=self._job_config(dry_run=True, use_query_cache=False))
+        except Exception as exc:
+            raise EngineError(_bq_error(exc)) from exc
+        return [f.name for f in (getattr(job, "schema", None) or [])]
 
     def sample_clause(self, fraction: float, seed: int, method: str) -> str:
         from ..sampling import percent_text

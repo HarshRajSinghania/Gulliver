@@ -144,7 +144,7 @@ class SnowflakeEngine(Engine):
                         if not batch:
                             break
                         for row in batch[: max(0, preview_rows - len(preview))]:
-                            preview.append({c: _jsonable(v) for c, v in zip(columns, row)})
+                            preview.append({c: _jsonable(v) for c, v in zip(columns, row, strict=False)})
                         total += len(batch)
             finally:
                 cur.close()
@@ -163,6 +163,9 @@ class SnowflakeEngine(Engine):
         return ExecResult(columns=columns, preview=preview, rows=total, elapsed_s=elapsed, bytes_processed=scanned,
                           cost_usd=self.cost_for(None, elapsed), truncated=total > len(preview),
                           notes=["cost assumes the warehouse runs only this query; resumes bill at least 60s"])
+
+    def md5_int(self, text_expr: str) -> str:
+        return f"TO_NUMBER(SUBSTR(MD5({text_expr}), 1, 7), 'XXXXXXX')"
 
     def sample_clause(self, fraction: float, seed: int, method: str) -> str:
         from ..sampling import percent_text

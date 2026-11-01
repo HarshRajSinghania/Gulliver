@@ -8,8 +8,9 @@ The CLI and the MCP server are thin wrappers around these functions.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from . import __version__
 from .config import ConfigError, Connection, Settings

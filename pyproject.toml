@@ -53,3 +53,22 @@ include = ["src", "tests", "skills", "README.md", "AGENTS.md", "llms.txt", "LICE
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP", "SIM", "S"]
+ignore = [
+  "S608",   # SQL built from parts: Gulliver generates SQL on purpose; every query is parsed and gated
+  "S101",   # assert in tests
+  "SIM108", # ternaries are not always clearer
+  "B904",
+  "SIM105", # explicit try/except/pass reads better in cleanup code
+  "S110",   # silent cleanup in close()/interrupt is intended
+  "B027",   # optional hooks on the engine base class
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]

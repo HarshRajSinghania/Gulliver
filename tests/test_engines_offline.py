@@ -34,7 +34,7 @@ def test_snowflake_cost_model():
     eng = SnowflakeEngine(Connection("sf", "snowflake", {"credits_per_hour": 2, "credit_usd": 3}), _conn=object())
     assert eng.cost_for(None, 3600) == pytest.approx(6.0)
     assert eng.cost_for(None, None) is None
-    assert "SAMPLE SYSTEM (1) SEED (7)" == eng.sample_clause(0.01, 7, "system")
+    assert eng.sample_clause(0.01, 7, "system") == "SAMPLE SYSTEM (1) SEED (7)"
 
 
 class FakeJob:

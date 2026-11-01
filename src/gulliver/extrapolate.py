@@ -60,13 +60,13 @@ def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float, float | Non
     sxx = sum((x - mx) ** 2 for x in xs)
     if sxx == 0:
         return my, 0.0, None
-    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+    sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=False))
     slope = sxy / sxx
     intercept = my - slope * mx
     if n < 3:
         return intercept, slope, None
     ss_tot = sum((y - my) ** 2 for y in ys)
-    ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys))
+    ss_res = sum((y - (intercept + slope * x)) ** 2 for x, y in zip(xs, ys, strict=False))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 1.0
     return intercept, slope, r2
 
@@ -74,7 +74,7 @@ def _linfit(xs: list[float], ys: list[float]) -> tuple[float, float, float | Non
 def fit_power_law(metric: str, fractions: list[float], values: list[float | None],
                   target: float = 1.0, offset: float = 0.0) -> Fit:
     """Fit m(f) = offset + a * f^k on the points where m > offset and predict m(target)."""
-    pts = [(f, v - offset) for f, v in zip(fractions, values)
+    pts = [(f, v - offset) for f, v in zip(fractions, values, strict=False)
            if v is not None and f > 0 and (v - offset) > 0]
     notes: list[str] = []
     if not pts:
