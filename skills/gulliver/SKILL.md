@@ -42,9 +42,10 @@ Partitioned tables need a `where` with a partition filter for `gulliver_check`, 
 
 ## Fixes for common lint findings
 
-`gulliver_fix` rewrites what can be rewritten safely (GV005 date filters, GV006 inner ORDER BY) and, with
-`mode=all`, GV012/GV007/GV009/GV002 too. Only call a result "the same" when `same_result` is true; otherwise
-tell the human what changed and verify with `gulliver_diff`.
+`gulliver_fix` rewrites GV005 date filters with a same-rows guarantee when it knows the column type from the
+connection. `mode=all` adds rewrites that need an assumption or change the result (GV005 on unknown types,
+GV012, GV007, GV009, GV002). Only call a result "the same" when `same_result` is true; otherwise tell the human
+what changed and verify with `gulliver_diff`.
 
 | Rule | Fix |
 |---|---|

@@ -3,10 +3,11 @@
 ## Unreleased
 
 - New `gulliver_fix` (MCP) / `gulliver fix` (CLI): rewrites SQL to be cheaper and labels every change with a
-  guarantee (`same`, `nulls`, `changes`). Safe by default: date filters such as `DATE(ts) = '...'`, `ts::date`,
-  `DATE_TRUNC`, `YEAR`/`EXTRACT(YEAR ...)` become ranges on the raw column; useless ORDER BY in CTEs and subqueries
-  is removed. `mode=all` adds NOT IN → NOT EXISTS, approximate distinct counts, UNION ALL and a LIMIT. With a
-  connection it estimates before and after.
+  guarantee (`same`, `assumes`, `nulls`, `changes`). By default only `same`: date filters such as
+  `DATE(ts) = '...'`, `ts::date`, `DATE_TRUNC`, `YEAR`/`EXTRACT(YEAR ...)` become ranges on the raw column when the
+  connection shows a DATE or TIMESTAMP-without-zone column. `mode=all` adds the same rewrite for unknown types
+  (`assumes`), NOT IN → NOT EXISTS, approximate distinct counts, UNION ALL and a LIMIT. With a connection it
+  estimates before and after.
 - `gulliver_preflight` and `gulliver_lint` include `autofix.fixed_sql` when a same-rows rewrite exists, so the
   agent gets the fix without an extra call.
 - Claude Code plugin installs the MCP server from PyPI (`uvx gulliver-mcp`).

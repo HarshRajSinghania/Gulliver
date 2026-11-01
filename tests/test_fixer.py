@@ -10,7 +10,7 @@ import pytest
 
 from gulliver import core
 from gulliver.cli import main
-from gulliver.fixer import fix, rewrite
+from gulliver.fixer import fix, rewrite, safe_date_type
 from gulliver.mcp_server import build_server
 
 
@@ -18,28 +18,78 @@ def flat(sql: str) -> str:
     return " ".join(sql.split())
 
 
-# -- rewrites per dialect ---------------------------------------------------------------
-@pytest.mark.parametrize("dialect, sql, expect", [
-    ("duckdb", "select a from t where date(ts) = '2024-01-01'", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
-    ("duckdb", "select a from t where ts::date = '2024-01-01'", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
-    ("duckdb", "select a from t where '2024-01-01' = date(ts)", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
-    ("duckdb", "select a from t where year(ts) = 2024", "ts >= '2024-01-01' AND ts < '2025-01-01'"),
-    ("duckdb", "select a from t where date_trunc('month', ts) = '2024-12-01'", "ts >= '2024-12-01' AND ts < '2025-01-01'"),
-    ("duckdb", "select a from t where date(ts) > '2024-01-01'", "ts >= '2024-01-02'"),
-    ("duckdb", "select a from t where date(ts) <= '2024-02-29'", "ts < '2024-03-01'"),
-    ("duckdb", "select a from t where date(ts) < '2024-01-01'", "ts < '2024-01-01'"),
-    ("bigquery", "SELECT a FROM t WHERE DATE(ts) BETWEEN '2024-01-01' AND '2024-01-31'",
+def typed(ctype: str = "TIMESTAMP", table: str = "t", column: str = "ts") -> dict:
+    return {table: {"columns": [{"name": column, "type": ctype}, {"name": "a", "type": "INTEGER"},
+                                {"name": "id", "type": "INTEGER"}]}}
+
+
+# -- rewrites per dialect (types known) ---------------------------------------------------
+@pytest.mark.parametrize("dialect, sql, ctype, expect", [
+    ("duckdb", "select a from t where date(ts) = '2024-01-01'", "TIMESTAMP", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
+    ("duckdb", "select a from t where ts::date = '2024-01-01'", "DATE", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
+    ("duckdb", "select a from t where '2024-01-01' = date(ts)", "TIMESTAMP", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
+    ("duckdb", "select a from t where year(ts) = 2024", "TIMESTAMP", "ts >= '2024-01-01' AND ts < '2025-01-01'"),
+    ("duckdb", "select a from t where date_trunc('month', ts) = '2024-12-01'", "TIMESTAMP",
+     "ts >= '2024-12-01' AND ts < '2025-01-01'"),
+    ("duckdb", "select a from t where date(ts) > '2024-01-01'", "TIMESTAMP", "ts >= '2024-01-02'"),
+    ("duckdb", "select a from t where date(ts) <= '2024-02-29'", "TIMESTAMP", "ts < '2024-03-01'"),
+    ("duckdb", "select a from t where date(ts) < '2024-01-01'", "TIMESTAMP", "ts < '2024-01-01'"),
+    ("bigquery", "SELECT a FROM t WHERE DATE(ts) BETWEEN '2024-01-01' AND '2024-01-31'", "TIMESTAMP",
      "ts >= '2024-01-01' AND ts < '2024-02-01'"),
-    ("bigquery", "SELECT a FROM t WHERE EXTRACT(YEAR FROM ts) = 2023", "ts >= '2023-01-01' AND ts < '2024-01-01'"),
-    ("bigquery", "SELECT a FROM t WHERE DATE(ts) >= DATE '2024-01-01'", "ts >= '2024-01-01'"),
-    ("snowflake", "select a from t where to_date(ts) = '2024-01-01'", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
-    ("postgres", "select a from t where date_trunc('day', ts) = '2024-01-01'", "ts >= '2024-01-01' AND ts < '2024-01-02'"),
+    ("bigquery", "SELECT a FROM t WHERE EXTRACT(YEAR FROM ts) = 2023", "DATETIME",
+     "ts >= '2023-01-01' AND ts < '2024-01-01'"),
+    ("bigquery", "SELECT a FROM t WHERE DATE(ts) >= DATE '2024-01-01'", "TIMESTAMP", "ts >= '2024-01-01'"),
+    ("snowflake", "select a from t where to_date(ts) = '2024-01-01'", "TIMESTAMP_NTZ",
+     "ts >= '2024-01-01' AND ts < '2024-01-02'"),
+    ("postgres", "select a from t where date_trunc('day', ts) = '2024-01-01'", "timestamp without time zone",
+     "ts >= '2024-01-01' AND ts < '2024-01-02'"),
 ])
-def test_range_rewrites(dialect, sql, expect):
-    out = rewrite(sql, dialect)
+def test_range_rewrites(dialect, sql, ctype, expect):
+    out = rewrite(sql, dialect, table_info=typed(ctype))
     assert expect in flat(out["fixed_sql"])
     assert out["same_result"] is True
-    assert [c["rule"] for c in out["changes"]] == ["GV005"]
+    assert [(c["rule"], c["guarantee"]) for c in out["changes"]] == [("GV005", "same")]
+
+
+@pytest.mark.parametrize("ctype, ok", [
+    ("DATE", True), ("TIMESTAMP", True), ("TIMESTAMP_NS", True), ("DATETIME", True), ("TIMESTAMP_NTZ", True),
+    ("timestamp without time zone", True), ("TIMESTAMP WITH TIME ZONE", False), ("TIMESTAMPTZ", False),
+    ("TIMESTAMP_TZ", False), ("TIMESTAMP_LTZ", False), ("timestamp with time zone", False), ("VARCHAR", False),
+    ("INTERVAL", False), ("TIME", False), ("STRING", False),
+])
+def test_safe_date_types(ctype, ok):
+    assert safe_date_type(ctype) is ok
+
+
+def test_unknown_type_is_only_offered_in_mode_all():
+    sql = "select a from t where date(ts) = '2024-01-01' limit 10"
+    assert rewrite(sql, "duckdb")["changes"] == []
+    out = rewrite(sql, "duckdb", mode="all")
+    assert [(c["rule"], c["guarantee"]) for c in out["changes"]] == [("GV005", "assumes")]
+    assert out["same_result"] is False
+
+
+@pytest.mark.parametrize("ctype", ["VARCHAR", "TIMESTAMP WITH TIME ZONE", "INTERVAL", "TIMESTAMP_LTZ"])
+def test_unsafe_types_never_rewritten(ctype):
+    for sql in ("select a from t where cast(ts as date) = '2024-01-05'", "select a from t where year(ts) = 2024"):
+        for mode in ("safe", "all"):
+            assert not [c for c in rewrite(sql, "duckdb", mode=mode, table_info=typed(ctype))["changes"]
+                        if c["rule"] == "GV005"], (sql, ctype, mode)
+
+
+def test_type_must_come_from_one_base_table():
+    info = {"v": {"columns": [{"name": "ts", "type": "VARCHAR"}]}, "u": {"columns": [{"name": "ts", "type": "DATE"}]}}
+    sql = "select 1 from v join u on v.id = u.id where cast(ts as date) = '2024-01-01'"
+    assert rewrite(sql, "duckdb", table_info=info)["changes"] == []  # unqualified and ambiguous
+    sql = "select 1 from v join u on v.id = u.id where cast(u.ts as date) = '2024-01-01'"
+    assert rewrite(sql, "duckdb", table_info=info)["changes"][0]["guarantee"] == "same"
+    sql = "select 1 from v join u on v.id = u.id where cast(v.ts as date) = '2024-01-01'"
+    assert rewrite(sql, "duckdb", table_info=info)["changes"] == []
+    # a derived table can redefine the column as text: do not trust the base table's type
+    sql = "select 1 from (select cast(ts as varchar) as ts from u) s where cast(ts as date) = '2024-01-01'"
+    assert rewrite(sql, "duckdb", table_info=info)["changes"] == []
+    sql = "with u as (select 'x' as ts) select 1 from u where cast(ts as date) = '2024-01-01'"
+    assert rewrite(sql, "duckdb", table_info=info)["changes"] == []
 
 
 @pytest.mark.parametrize("sql, dialect", [
@@ -48,27 +98,29 @@ def test_range_rewrites(dialect, sql, expect):
     ("SELECT a FROM t WHERE DATE(ts, 'Europe/Amsterdam') = '2024-01-01'", "bigquery"),  # time zone argument
     ("select a from t where date(ts) = '2024-01-01 10:00'", "duckdb"),             # not a clean day literal
     ("select a from t where date(a) = date(b)", "duckdb"),
+    ("select a from t where try_to_date(ts) = '2024-01-01'", "snowflake"),         # TRY_ version: errors become NULL
+    ("select a from t where year(ts) = '2024-01-01'", "duckdb"),                   # an error in the original
+    ("select a from t where date_trunc('year', ts) = 2024", "duckdb"),             # an error in the original
+    ("select a from t where date(ts) between symmetric '2024-02-01' and '2024-01-01'", "postgres"),
+    ("select a from t where date(ts) = '9999-12-31'", "duckdb"),                   # next day is past year 9999
+    ("select a from t where date(ts) between '2024-01-01' and '9999-12-31'", "duckdb"),
+    ("select a from t where date_trunc('month', ts) = '9999-12-01'", "duckdb"),
+    ("select a from t where year(ts) > 2023", "duckdb"),                           # DuckDB infinity: one-sided YEAR
+    ("select a from t where not (year(ts) = 2024)", "duckdb"),                     # DuckDB infinity: negated YEAR
 ])
 def test_range_rewrites_left_alone(sql, dialect):
-    assert rewrite(sql, dialect)["changes"] == []
+    for mode in ("safe", "all"):
+        out = rewrite(sql, dialect, mode=mode, table_info=typed("TIMESTAMP"))
+        assert [c for c in out["changes"] if c["rule"] == "GV005"] == [], (sql, mode)
 
 
-def test_range_rewrite_skips_text_columns():
-    info = {"t": {"columns": [{"name": "s", "type": "VARCHAR"}]}}
-    assert rewrite("select a from t where cast(s as date) = '2024-01-01'", "duckdb", table_info=info)["changes"] == []
-    typed = {"t": {"columns": [{"name": "s", "type": "TIMESTAMP"}]}}
-    out = rewrite("select a from t where cast(s as date) = '2024-01-01'", "duckdb", table_info=typed)
-    assert out["changes"] and "Assumes" not in out["changes"][0]["note"]
-
-
-def test_inner_order_removed_only_where_it_does_nothing():
-    out = rewrite("with x as (select a from t order by a) select a from x order by a limit 5", "duckdb")
-    assert [c["rule"] for c in out["changes"]] == ["GV006"]
-    assert "ORDER BY a LIMIT 5" in flat(out["fixed_sql"])  # the outer sort stays
-    for sql in ("select array(select x from y order by x) from z",
-                "select * from (select a from t order by a limit 3) s",
-                "select * from (select distinct on (a) a, b from t order by a, b) s"):
-        assert rewrite(sql, "duckdb")["changes"] == [], sql
+def test_order_by_in_subqueries_is_never_touched():
+    for sql in ("select * from (select a from big order by b desc) s limit 3",
+                "with x as (select a from t order by a) select string_agg(a, ',') from x",
+                "select row_number() over () from (select a from t order by a) s"):
+        for mode in ("safe", "all"):
+            out = rewrite(sql, "duckdb", mode=mode)
+            assert "ORDER BY" in out["fixed_sql"], (sql, mode)
 
 
 def test_opt_in_rewrites_only_in_mode_all():
@@ -98,50 +150,69 @@ def test_blocked_statement():
 
 
 def test_write_statement_keeps_its_target():
-    out = rewrite("create table x as select a from t where date(ts) = '2024-01-01'", "duckdb")
+    out = rewrite("create table x as select a from t where date(ts) = '2024-01-01'", "duckdb", table_info=typed())
     assert flat(out["fixed_sql"]).startswith("CREATE TABLE x AS SELECT a FROM t WHERE ts >= '2024-01-01'")
 
 
 # -- the guarantee, checked on real data ---------------------------------------------------
+STAMPS = ["2023-12-31 23:59:59.999999", "2024-01-01 00:00:00", "2024-01-01 12:00:00", "2024-01-01 23:59:59.999999",
+          "2024-01-02 00:00:00", "2024-02-29 13:00:00", "2024-03-01 00:00:00", "2024-12-31 23:59:59",
+          "2025-01-01 00:00:00", "infinity", "-infinity", None]
+
+
 @pytest.fixture(scope="module")
 def edge_db(tmp_path_factory):
     path = str(tmp_path_factory.mktemp("fix") / "edge.duckdb")
     con = duckdb.connect(path)
-    con.execute("SET TimeZone = 'Europe/Amsterdam'")
-    con.execute("create table t (id int, ts timestamp, d date, tz timestamptz)")
-    stamps = ["2023-12-31 23:59:59.999999", "2024-01-01 00:00:00", "2024-01-01 12:00:00", "2024-01-01 23:59:59.999999",
-              "2024-01-02 00:00:00", "2024-02-29 13:00:00", "2024-03-01 00:00:00", "2024-12-31 23:59:59",
-              "2025-01-01 00:00:00", None]
-    for i, s in enumerate(stamps):
-        con.execute("insert into t values (?, ?::timestamp, ?::timestamp::date, ?::timestamptz)", [i, s, s, s])
+    con.execute("create table t (id int, ts timestamp, d date)")
+    for i, s in enumerate(STAMPS):
+        con.execute("insert into t values (?, ?::timestamp, ?::timestamp::date)", [i, s, s])
+    info = {"t": {"columns": [{"name": n, "type": ty} for n, ty in con.execute("select column_name, data_type "
+                                                                                "from duckdb_columns() where "
+                                                                                "table_name = 't'").fetchall()]}}
     con.close()
-    return path
+    return path, info
 
 
 PREDICATES = [
     "date({c}) = '2024-01-01'", "{c}::date = '2024-01-01'", "date({c}) >= '2024-01-01'", "date({c}) > '2024-01-01'",
     "date({c}) < '2024-01-02'", "date({c}) <= '2024-01-01'", "date({c}) between '2024-01-01' and '2024-02-29'",
-    "year({c}) = 2024", "extract(year from {c}) = 2024", "date_trunc('month', {c}) = '2024-02-01'",
-    "date_trunc('year', {c}) = '2024-01-01'", "not (date({c}) = '2024-01-01')", "date({c}) = '2024-01-01' or id = 9",
+    "year({c}) = 2024", "extract(year from {c}) = 2024", "year({c}) between 2023 and 2024",
+    "date_trunc('month', {c}) = '2024-02-01'", "date_trunc('year', {c}) = '2024-01-01'",
+    "not (date({c}) = '2024-01-01')", "date({c}) = '2024-01-01' or id = 9", "'2024-01-01' < date({c})",
 ]
 
 
-@pytest.mark.parametrize("column", ["ts", "d", "tz"])
+@pytest.mark.parametrize("column", ["ts", "d"])
 @pytest.mark.parametrize("predicate", PREDICATES)
 def test_same_rows_on_real_data(edge_db, column, predicate):
+    path, info = edge_db
     sql = f"select id from t where {predicate.format(c=column)} order by id"
-    out = rewrite(sql, "duckdb")
+    out = rewrite(sql, "duckdb", table_info=info)
     assert out["changes"], sql
     assert out["same_result"]
-    con = duckdb.connect(edge_db, read_only=True)
-    con.execute("SET TimeZone = 'Europe/Amsterdam'")
+    con = duckdb.connect(path, read_only=True)
     before = con.execute(sql).fetchall()
     after = con.execute(out["fixed_sql"]).fetchall()
     con.close()
     assert before == after, (sql, out["fixed_sql"])
 
 
-def test_not_exists_matches_not_in_without_nulls(tmp_path):
+def test_timestamptz_is_left_alone_dst_at_midnight():
+    # Atlantic/Azores repeats 00:00 on 2024-10-27: a literal range would miss the first hour
+    con = duckdb.connect()
+    con.execute("SET TimeZone = 'Atlantic/Azores'")
+    con.execute("create table t as select timestamptz '2024-10-27 00:00:00+00' + i * interval 1 minute as tz "
+                "from range(-120, 180) r(i)")
+    info = {"t": {"columns": [{"name": "tz", "type": "TIMESTAMP WITH TIME ZONE"}]}}
+    sql = "select count(*) from t where date(tz) = '2024-10-27'"
+    assert rewrite(sql, "duckdb", table_info=info)["changes"] == []
+    assumed = rewrite(sql, "duckdb", mode="all")  # unknown type: offered, but labelled as an assumption
+    assert assumed["changes"][0]["guarantee"] == "assumes"
+    assert con.execute(sql).fetchone() != con.execute(assumed["fixed_sql"]).fetchone()  # why it is not "same"
+
+
+def test_not_exists_matches_not_in_without_nulls():
     con = duckdb.connect()
     con.execute("create table e as select range as id, range % 7 as user_id from range(100)")
     con.execute("create table banned as select * from (values (1), (3)) v(user_id)")
@@ -157,6 +228,7 @@ def test_not_exists_matches_not_in_without_nulls(tmp_path):
 def test_fix_with_connection_reports_estimates(settings):
     out = fix(settings, "select event_type, count(*) from events where date(ts) = '2025-01-02' group by 1")
     assert out["status"] == "ok" and out["same_result"]
+    assert out["changes"][0]["guarantee"] == "same" and "TIMESTAMP" in out["changes"][0]["note"]
     assert out["estimate"]["before"]["bytes"] and out["estimate"]["after"]["bytes"]
     assert "saving" in out and "summary" in out["saving"]
     assert out["connection"] == "default"
@@ -168,17 +240,17 @@ def test_fix_nothing_to_do(settings):
 
 
 def test_fix_other_dialect_works_offline(settings):
-    out = fix(settings, "SELECT a FROM t WHERE DATE(ts) = '2024-01-01'", dialect="bigquery")
+    out = fix(settings, "SELECT a FROM t WHERE DATE(ts) = '2024-01-01'", dialect="bigquery", mode="all")
     assert out["changes"] and "estimate" not in out and "connection" not in out
+    assert out["changes"][0]["guarantee"] == "assumes"
 
 
-def test_preflight_and_lint_hand_over_the_fixed_sql(settings):
+def test_preflight_hands_over_the_fixed_sql(settings):
     pre = core.preflight(settings, "select event_type, count(*) from events where date(ts) = '2025-01-02' group by 1")
     assert pre["autofix"]["same_result"] and "ts >= '2025-01-02'" in flat(pre["autofix"]["fixed_sql"])
     assert "autofix.fixed_sql" in pre["next_step"]
-    lint = core.lint_sql("select a from t where year(ts) = 2024", "duckdb")
-    assert lint["autofix"]["rules"] == ["GV005"]
-    assert "autofix" not in core.lint_sql("select count(*) from t", "duckdb")
+    # offline lint cannot see column types, so it offers no same-rows fix
+    assert "autofix" not in core.lint_sql("select a from t where year(ts) = 2024", "duckdb")
 
 
 def test_cli_fix(demo_db, state, capsys):

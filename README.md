@@ -33,9 +33,10 @@ Gulliver sits between the agent and the warehouse:
 
 Every answer has a `status` and a `next_step`, so even small models know what to do next.
 
-Gulliver does not only say no. `gulliver_fix` **rewrites the SQL for the agent** and labels every change:
-`same` (exactly the same rows, applied by default), `nulls` or `changes` (only with `mode=all`). With a
-connection it estimates the old and the new query side by side, so nobody has to trust the saving blindly.
+Gulliver does not only say no. `gulliver_fix` **rewrites the SQL for the agent** and labels every change.
+`same` (exactly the same rows) is only claimed when Gulliver has checked the column types on the connection;
+everything else (`assumes`, `nulls`, `changes`) needs `mode=all` and says what may differ. With a connection it
+estimates the old and the new query side by side, so nobody has to trust the saving blindly.
 
 And for the pipeline around the query (details in [Pipeline tools](#pipeline-tools)):
 
@@ -293,25 +294,31 @@ gulliver fix "select event_type, count(*) from events where date(ts) = '2025-01-
 GV005 [returns exactly the same rows]
   before: CAST(ts AS DATE) = '2025-01-02'
   after:  ts >= '2025-01-02' AND ts < '2025-01-03'
-  why:    Filters the raw column ts by range, so partitions and min/max statistics can skip data.
+  why:    Filters the raw column ts by range, so partitions, indexes and min/max statistics can skip data. ts is TIMESTAMP, so the rows are the same.
 ```
 
 | Rewrite | Rule | Guarantee | Default |
 |---|---|---|---|
-| `DATE(ts) = d`, `ts::date`, `TO_DATE(ts)`, `DATE_TRUNC(unit, ts)`, `YEAR(ts)`, `EXTRACT(YEAR ...)` with `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` → a range on the raw column | GV005 | same rows | yes |
-| `ORDER BY` inside a CTE or FROM-subquery without LIMIT → removed | GV006 | same rows | yes |
-| `a.x NOT IN (SELECT y ...)` → `NOT EXISTS` | GV012 | same rows unless the subquery returns NULL | `mode=all` |
-| `COUNT(DISTINCT x)` → approximate distinct count | GV007 | changes (approximate) | `mode=all` |
-| `UNION` → `UNION ALL` | GV009 | changes (keeps duplicates) | `mode=all` |
-| unbounded `SELECT` → `LIMIT n` | GV002 | changes (fewer rows) | `mode=all` |
+| `DATE(ts) = d`, `ts::date`, `TO_DATE(ts)`, `DATE_TRUNC(day/month/year, ts)`, `YEAR(ts)`, `EXTRACT(YEAR ...)` with `=`, `<`, `<=`, `>`, `>=`, `BETWEEN` → a range on the raw column | GV005 | `same` when the connection shows the column is a DATE or a TIMESTAMP without time zone | yes |
+| the same, when the column type is unknown | GV005 | `assumes` (same rows only if it is such a column) | `mode=all` |
+| `a.x NOT IN (SELECT y ...)` → `NOT EXISTS` | GV012 | `nulls`: same rows unless the subquery returns NULL | `mode=all` |
+| `COUNT(DISTINCT x)` → approximate distinct count | GV007 | `changes` (approximate) | `mode=all` |
+| `UNION` → `UNION ALL` | GV009 | `changes` (keeps duplicates) | `mode=all` |
+| unbounded `SELECT` → `LIMIT n` | GV002 | `changes` (fewer rows) | `mode=all` |
+
+`same` is a promise, so Gulliver keeps it narrow. It never rewrites a date filter on text columns,
+`TIMESTAMP WITH TIME ZONE` (a day can start twice when the clocks change at midnight), intervals, `TRY_` and
+`BETWEEN SYMMETRIC` variants, filters with a time-zone or format argument, or periods that run past year 9999.
+A column only counts as typed when it clearly comes from one table with metadata, not from a CTE or subquery
+that could redefine it. Every `same` rewrite is tested against real data: DATE and TIMESTAMP columns, NULLs,
+`infinity`, the last microsecond of a day and leap days.
 
 What it will not do: guess a date range for a missing partition filter (GV004) or a join key for a
 cartesian join (GV003). Those need a decision, so they stay in `remaining`.
 
-Every `same` rewrite is tested against real data (DATE, TIMESTAMP and TIMESTAMPTZ columns, NULLs, the last
-microsecond of a day, leap days, a non-UTC session time zone). Where it pays off: Postgres cannot use a plain index
-or range partitions on `ts` for `ts::date = ...`, and BigQuery, Snowflake and Parquet readers prune best on the raw
-column. DuckDB already optimizes this case on its own tables, so there the estimate stays the same.
+Where it pays off: Postgres cannot use a plain index or range partitions on `ts` for `ts::date = ...`, and
+BigQuery, Snowflake and Parquet readers prune best on the raw column. DuckDB already optimizes this case on its
+own tables, so there the estimate stays the same.
 
 ## Scale lint rules
 

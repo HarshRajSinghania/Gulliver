@@ -3,7 +3,10 @@
 Agents get lint findings, but small models often fail to rewrite the SQL themselves. `gulliver_fix`
 does the rewrite and labels every change with a guarantee:
 
-  same     the rewritten query returns exactly the same rows (always applied)
+  same     the rewritten query returns exactly the same rows. Applied by default, and only when
+           Gulliver knows the column types from the connection's metadata.
+  assumes  same rows IF the column is a DATE or a TIMESTAMP without time zone (the type was not known)
+                                                                       -> only with mode="all"
   nulls    same rows, unless a NOT IN subquery returns NULL (then the original returns nothing,
            which is almost never what was meant)                       -> only with mode="all"
   changes  the result changes on purpose (LIMIT, approximate count, UNION ALL)
@@ -11,11 +14,17 @@ does the rewrite and labels every change with a guarantee:
 
 With a connection it also estimates the original and the fixed query (free: dry run / EXPLAIN),
 so the agent and the human see the saving instead of trusting it.
+
+Why the date rewrite needs the type: on text columns a range compares strings, not dates; on
+TIMESTAMP WITH TIME ZONE a day can start twice (DST at midnight) or per-row offsets apply; on
+INTERVAL columns the range is not even valid SQL. So "same" is only claimed for DATE, TIMESTAMP
+(without zone), DATETIME and BigQuery TIMESTAMP (always UTC).
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import asdict, dataclass
 from datetime import date
@@ -24,19 +33,21 @@ from typing import Any
 from sqlglot import exp
 
 from .lint import _has_aggregation, _outer_select, lint, summarize
-from .sqlsafety import Statement, classify
+from .sqlsafety import Statement, classify, table_ref
 
 SAME = "same"
+ASSUMES = "assumes"
 NULLS = "nulls"
 CHANGES = "changes"
 GUARANTEE_TEXT = {
     SAME: "returns exactly the same rows",
+    ASSUMES: "same rows if the column is a DATE or a TIMESTAMP without time zone",
     NULLS: "same rows unless the subquery returns NULL",
     CHANGES: "changes the result on purpose",
 }
 
-DATE_TYPES = ("date", "time", "datetime")  # matches DATE, TIMESTAMP, TIMESTAMP_TZ, DATETIME, TIMESTAMPTZ ...
 _ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ZONED = re.compile(r"WITH TIME ZONE|(?<!N)TZ")  # TIMESTAMPTZ, TIMESTAMP_TZ, TIMESTAMP_LTZ; not TIMESTAMP_NTZ
 
 
 @dataclass
@@ -53,6 +64,69 @@ class Change:
         return out
 
 
+# -- column types ---------------------------------------------------------------------------
+def safe_date_type(ctype: str) -> bool:
+    """DATE, TIMESTAMP without zone, DATETIME, TIMESTAMP_NTZ, BigQuery TIMESTAMP (UTC)."""
+    t = " ".join(ctype.upper().split())
+    if _ZONED.search(t):
+        return False
+    return t == "DATE" or t.startswith("TIMESTAMP") or t.startswith("DATETIME")
+
+
+def _from(select: exp.Select) -> exp.From | None:
+    return select.args.get("from_") or select.args.get("from")  # the key is "from_" in newer sqlglot
+
+
+def _sources(select: exp.Select, dialect: str, cte_names: set[str]) -> dict[str, str | None]:
+    """Alias (lower case) -> base table ref (lower case), or None for a derived source (CTE, subquery ...)."""
+    out: dict[str, str | None] = {}
+    items: list[exp.Expression] = []
+    if _from(select) is not None:
+        items.append(_from(select).this)
+    items.extend(join.this for join in select.args.get("joins") or [])
+    for item in items:
+        alias = (item.alias_or_name or "").lower()
+        if isinstance(item, exp.Table) and isinstance(item.this, exp.Identifier):
+            plain = item.name.lower() in cte_names and not item.args.get("db") and not item.args.get("catalog")
+            out[alias] = None if plain else table_ref(item, dialect).lower()
+        else:
+            out[alias or f"_derived{len(out)}"] = None
+    return out
+
+
+def _type_resolver(select: exp.Select, dialect: str, cte_names: set[str],
+                   tables: dict[str, dict[str, str]]) -> Callable[[exp.Column], str | None]:
+    """Find a column's type only when it surely comes from one base table with metadata."""
+    sources = _sources(select, dialect, cte_names)
+
+    def resolve(col: exp.Column) -> str | None:
+        name = col.name.lower()
+        if col.table:
+            key = col.table.lower()
+            if key not in sources:
+                return None  # an outer (correlated) reference: do not guess
+            ref = sources[key]
+            return tables.get(ref, {}).get(name) if ref else None
+        if any(ref is None for ref in sources.values()):
+            return None  # a CTE or subquery could define a column with this name
+        if any(ref not in tables for ref in sources.values()):
+            return None  # a table without metadata could have it
+        found = [tables[ref][name] for ref in sources.values() if name in tables[ref]]
+        return found[0] if len(found) == 1 else None
+
+    return resolve
+
+
+def table_columns(table_info: dict[str, dict] | None) -> dict[str, dict[str, str]]:
+    """Table ref (lower case) -> {column (lower case): type} from engine metadata."""
+    out: dict[str, dict[str, str]] = {}
+    for ref, info in (table_info or {}).items():
+        cols = info.get("columns")
+        if cols:
+            out[ref.lower()] = {str(c.get("name", "")).lower(): str(c.get("type", "")) for c in cols}
+    return out
+
+
 # -- date range filters (GV005) ----------------------------------------------------------
 def _unit_of(node: exp.Expression | None) -> str | None:
     if node is None:
@@ -62,35 +136,45 @@ def _unit_of(node: exp.Expression | None) -> str | None:
     return {"DAY": "day", "MONTH": "month", "YEAR": "year"}.get(text)
 
 
-def _truncation(node: exp.Expression) -> tuple[exp.Column, str] | None:
-    """`DATE(ts)`, `ts::date`, `TO_DATE(ts)`, `DATE_TRUNC('month', ts)`, `YEAR(ts)` ... -> (ts, unit)."""
+def _truncation(node: exp.Expression) -> tuple[exp.Column, str, str] | None:
+    """`DATE(ts)`, `ts::date`, `TO_DATE(ts)`, `DATE_TRUNC('month', ts)` -> (ts, unit, "date");
+    `YEAR(ts)`, `EXTRACT(YEAR FROM ts)` -> (ts, "year", "number")."""
     if isinstance(node, exp.Date) and isinstance(node.this, exp.Column) and not any(
             v for k, v in node.args.items() if k != "this"):
-        return node.this, "day"
-    if isinstance(node, exp.TsOrDsToDate) and isinstance(node.this, exp.Column) and not node.args.get("format"):
-        return node.this, "day"
+        return node.this, "day", "date"
+    if (isinstance(node, exp.TsOrDsToDate) and isinstance(node.this, exp.Column)
+            and not node.args.get("format") and not node.args.get("safe")):
+        return node.this, "day", "date"
     if isinstance(node, exp.Cast) and not isinstance(node, exp.TryCast) and isinstance(node.this, exp.Column):
         to = node.args.get("to")
-        if isinstance(to, exp.DataType) and to.this == exp.DataType.Type.DATE:
-            return node.this, "day"
+        if isinstance(to, exp.DataType) and to.this == exp.DataType.Type.DATE and not node.args.get("format"):
+            return node.this, "day", "date"
     if isinstance(node, (exp.TimestampTrunc, exp.DateTrunc, exp.DatetimeTrunc)) and isinstance(node.this, exp.Column):
         if node.args.get("zone"):
             return None
         unit = _unit_of(node.args.get("unit"))
         if unit:
-            return node.this, unit
+            return node.this, unit, "date"
     if isinstance(node, exp.Year) and isinstance(node.this, exp.Column):
-        return node.this, "year"
+        return node.this, "year", "number"
     if (isinstance(node, exp.Extract) and isinstance(node.expression, exp.Column)
             and _unit_of(node.this) == "year"):
-        return node.expression, "year"
+        return node.expression, "year", "number"
     return None
 
 
-def _literal_start(node: exp.Expression | None, unit: str) -> date | None:
-    """The first day of the period that the literal names, or None if it is not a clean literal."""
+def _literal_start(node: exp.Expression | None, unit: str, kind: str) -> date | None:
+    """The first day of the period the literal names; None if it is not a clean literal of the right kind."""
     if node is None:
         return None
+    if kind == "number":  # YEAR(ts) = 2024: an integer, nothing else
+        if not isinstance(node, exp.Literal) or node.is_string:
+            return None
+        try:
+            year = int(node.name)
+        except ValueError:
+            return None
+        return date(year, 1, 1) if 1 <= year <= 9998 else None
     if isinstance(node, exp.Cast) and isinstance(node.this, exp.Literal):
         to = node.args.get("to")
         if not (isinstance(to, exp.DataType) and to.this == exp.DataType.Type.DATE):
@@ -98,15 +182,7 @@ def _literal_start(node: exp.Expression | None, unit: str) -> date | None:
         node = node.this
     if isinstance(node, exp.Date) and isinstance(node.this, exp.Literal):
         node = node.this
-    if not isinstance(node, exp.Literal):
-        return None
-    if unit == "year" and not node.is_string:
-        try:
-            year = int(node.name)
-        except ValueError:
-            return None
-        return date(year, 1, 1) if 1 <= year <= 9998 else None
-    if not node.is_string or not _ISO_DAY.match(node.name):
+    if not isinstance(node, exp.Literal) or not node.is_string or not _ISO_DAY.match(node.name):
         return None
     try:
         day = date.fromisoformat(node.name)
@@ -119,19 +195,19 @@ def _literal_start(node: exp.Expression | None, unit: str) -> date | None:
     return day
 
 
-def _next(start: date, unit: str) -> date:
-    if unit == "day":
-        return date.fromordinal(start.toordinal() + 1)
-    if unit == "month":
-        return date(start.year + (start.month == 12), start.month % 12 + 1, 1)
-    return date(start.year + 1, 1, 1)
+def _next(start: date, unit: str) -> date | None:
+    """The first day of the next period, or None past year 9999 (then no rewrite)."""
+    try:
+        if unit == "day":
+            return date.fromordinal(start.toordinal() + 1)
+        if unit == "month":
+            return date(start.year + (start.month == 12), start.month % 12 + 1, 1)
+        return date(start.year + 1, 1, 1)
+    except (ValueError, OverflowError):
+        return None
 
 
 FLIP = {exp.GT: exp.LT, exp.GTE: exp.LTE, exp.LT: exp.GT, exp.LTE: exp.GTE, exp.EQ: exp.EQ}
-
-
-def _column_type(col: exp.Column, column_types: dict[str, str]) -> str | None:
-    return column_types.get(col.name.lower())
 
 
 def _range(col: exp.Column, low: date | None, high: date | None) -> exp.Expression:
@@ -140,22 +216,36 @@ def _range(col: exp.Column, low: date | None, high: date | None) -> exp.Expressi
         parts.append(exp.GTE(this=col.copy(), expression=exp.Literal.string(low.isoformat())))
     if high is not None:
         parts.append(exp.LT(this=col.copy(), expression=exp.Literal.string(high.isoformat())))
-    node = parts[0] if len(parts) == 1 else exp.And(this=parts[0], expression=parts[1])
-    return exp.Paren(this=node) if len(parts) > 1 else node
+    if len(parts) == 1:
+        return parts[0]
+    return exp.Paren(this=exp.And(this=parts[0], expression=parts[1]))
 
 
-def _rewrite_range(cmp: exp.Expression, column_types: dict[str, str]) -> tuple[exp.Expression, str] | None:
-    """Return (replacement, note) for a comparison on a truncated date column, else None."""
+def _negated(cmp: exp.Expression, stop: exp.Expression) -> bool:
+    node = cmp.parent
+    while node is not None and node is not stop:
+        if isinstance(node, exp.Not):
+            return True
+        node = node.parent
+    return False
+
+
+def _rewrite_range(cmp: exp.Expression, where: exp.Where, dialect: str,
+                   resolve: Callable[[exp.Column], str | None]) -> tuple[exp.Expression, exp.Column, str] | None:
+    """Return (replacement, column, unit) for a comparison on a truncated date column, else None."""
+    two_sided = True
     if isinstance(cmp, exp.Between):
+        if cmp.args.get("symmetric"):
+            return None  # BETWEEN SYMMETRIC swaps the bounds; keep it as it is
         trunc = _truncation(cmp.this)
         if not trunc:
             return None
-        col, unit = trunc
-        low = _literal_start(cmp.args.get("low"), unit)
-        high = _literal_start(cmp.args.get("high"), unit)
+        col, unit, kind = trunc
+        low = _literal_start(cmp.args.get("low"), unit, kind)
+        high = _literal_start(cmp.args.get("high"), unit, kind)
         if low is None or high is None:
             return None
-        repl = _range(col, low, _next(high, unit))
+        bounds = (low, _next(high, unit))
     else:
         op = type(cmp)
         if op not in FLIP:
@@ -169,10 +259,11 @@ def _rewrite_range(cmp: exp.Expression, column_types: dict[str, str]) -> tuple[e
             op = FLIP[op]
         if not trunc:
             return None
-        col, unit = trunc
-        start = _literal_start(literal, unit)
+        col, unit, kind = trunc
+        start = _literal_start(literal, unit, kind)
         if start is None:
             return None
+        two_sided = op is exp.EQ
         bounds = {
             exp.EQ: (start, _next(start, unit)),
             exp.GTE: (start, None),
@@ -180,62 +271,49 @@ def _rewrite_range(cmp: exp.Expression, column_types: dict[str, str]) -> tuple[e
             exp.LT: (None, start),
             exp.LTE: (None, _next(start, unit)),
         }[op]
-        repl = _range(col, *bounds)
-    ctype = _column_type(col, column_types)
-    if ctype is not None and not any(t in ctype.lower() for t in DATE_TYPES):
-        return None  # e.g. a VARCHAR holding dates: comparing text ranges would not be the same filter
-    note = (f"Filters the raw column {col.sql()} by range, so partitions and min/max statistics can skip data.")
-    if ctype is None:
-        note += f" Assumes {col.sql()} is a DATE or TIMESTAMP column."
-    return repl, note
+    if bounds == (None, None) or (two_sided and None in bounds):
+        return None  # the next period would start after year 9999
+    if dialect == "duckdb" and kind == "number" and (not two_sided or _negated(cmp, where)):
+        return None  # DuckDB: YEAR('infinity') is NULL, a range on 'infinity' is not
+    return _range(col, *bounds), col, unit
 
 
-def _fix_ranges(tree: exp.Expression, dialect: str, column_types: dict[str, str], changes: list[Change]) -> None:
+def _fix_ranges(tree: exp.Expression, dialect: str, tables: dict[str, dict[str, str]], mode: str,
+                changes: list[Change]) -> None:
+    cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
     for select in list(tree.find_all(exp.Select)):
         where = select.args.get("where")
         if where is None:
             continue
+        resolve = _type_resolver(select, dialect, cte_names, tables)
         for cmp in list(where.find_all(exp.EQ, exp.GT, exp.GTE, exp.LT, exp.LTE, exp.Between)):
             if cmp.find_ancestor(exp.Select) is not select:
                 continue  # belongs to a subquery; handled when we visit that select
-            out = _rewrite_range(cmp, column_types)
+            out = _rewrite_range(cmp, where, dialect, resolve)
             if out is None:
                 continue
-            repl, note = out
+            repl, col, _unit = out
+            ctype = resolve(col)
+            if ctype is not None and not safe_date_type(ctype):
+                continue  # text, TIMESTAMP WITH TIME ZONE, INTERVAL ...: not the same filter
+            guarantee = SAME if ctype is not None else ASSUMES
+            if guarantee == ASSUMES and mode != "all":
+                continue
             if isinstance(repl, exp.Paren) and isinstance(cmp.parent, (exp.Where, exp.And)):
                 repl = repl.this  # AND inside AND/WHERE needs no brackets
             before = cmp.sql(dialect=dialect)
             cmp.replace(repl)
-            changes.append(Change("GV005", SAME, before, repl.sql(dialect=dialect), note))
-
-
-# -- ORDER BY inside a subquery or CTE (GV006) ------------------------------------------
-def _fix_inner_order(tree: exp.Expression, dialect: str, changes: list[Change]) -> None:
-    outer = _outer_select(tree)
-    for select in list(tree.find_all(exp.Select)):
-        if select is outer or not select.args.get("order"):
-            continue
-        if select.args.get("limit") or select.args.get("offset") or select.args.get("fetch"):
-            continue
-        distinct = select.args.get("distinct")
-        if distinct is not None and distinct.args.get("on"):
-            continue  # DISTINCT ON depends on the order
-        parent = select.parent
-        source = isinstance(parent, exp.CTE) or (
-            isinstance(parent, exp.Subquery) and isinstance(parent.parent, (exp.From, exp.Join)))
-        if not source:
-            continue  # e.g. ARRAY(SELECT ... ORDER BY ...) keeps its order on purpose
-        before = select.args["order"].sql(dialect=dialect)
-        select.set("order", None)
-        changes.append(Change("GV006", SAME, before, "(removed)",
-                              "SQL does not keep the order of a subquery or CTE, so this sort only costs time."))
+            note = f"Filters the raw column {col.sql(dialect=dialect)} by range, so partitions, indexes and min/max " \
+                   "statistics can skip data."
+            if guarantee == SAME:
+                note += f" {col.sql(dialect=dialect)} is {ctype}, so the rows are the same."
+            else:
+                note += (f" The type of {col.sql(dialect=dialect)} is unknown: only use this if it is a DATE or a "
+                         "TIMESTAMP without time zone (not text, not with time zone).")
+            changes.append(Change("GV005", guarantee, before, repl.sql(dialect=dialect), note))
 
 
 # -- NOT IN (subquery) -> NOT EXISTS (GV012) ---------------------------------------------
-def _from(select: exp.Select) -> exp.From | None:
-    return select.args.get("from_") or select.args.get("from")  # the key is "from_" in newer sqlglot
-
-
 def _fix_not_in(tree: exp.Expression, dialect: str, changes: list[Change]) -> None:
     for not_node in list(tree.find_all(exp.Not)):
         inner = not_node.this
@@ -310,25 +388,12 @@ def _fix_union(tree: exp.Expression, dialect: str, changes: list[Change]) -> Non
 
 
 # -- driver -------------------------------------------------------------------------------
-def column_types_from(table_info: dict[str, dict] | None) -> dict[str, str]:
-    """Lower-case column name -> type, from engine metadata (ambiguous names are dropped)."""
-    types: dict[str, str] = {}
-    clash: set[str] = set()
-    for info in (table_info or {}).values():
-        for col in info.get("columns") or []:
-            name = str(col.get("name", "")).lower()
-            ctype = str(col.get("type", ""))
-            if name in types and types[name] != ctype:
-                clash.add(name)
-            types[name] = ctype
-    for name in clash:
-        types.pop(name, None)
-    return types
-
-
 def rewrite(sql: str, dialect: str = "duckdb", mode: str = "safe", limit: int = 1000,
             table_info: dict[str, dict] | None = None) -> dict[str, Any]:
-    """Rewrite one statement. Pure SQL work: no database needed."""
+    """Rewrite one statement. Pure SQL work: no database needed.
+
+    `table_info` maps lower-case table refs to engine metadata with `columns` ({name, type}); without it,
+    date rewrites cannot be proven and are only offered in mode "all" (guarantee "assumes")."""
     if mode not in ("safe", "all"):
         raise ValueError("mode must be 'safe' or 'all'")
     statement: Statement = classify(sql, dialect)
@@ -338,9 +403,7 @@ def rewrite(sql: str, dialect: str = "duckdb", mode: str = "safe", limit: int = 
     before_findings = lint(statement.select, dialect, table_info)
     changes: list[Change] = []
     tree = statement.tree
-    column_types = column_types_from(table_info)
-    _fix_ranges(statement.select, dialect, column_types, changes)
-    _fix_inner_order(statement.select, dialect, changes)
+    _fix_ranges(statement.select, dialect, table_columns(table_info), mode, changes)
     if mode == "all":
         _fix_not_in(statement.select, dialect, changes)
         _fix_approx(statement.select, dialect, changes)
@@ -417,9 +480,9 @@ def fix(settings: Any, sql: str, connection: str | None = None, dialect: str | N
                         saving["summary"] += (f", cost {_fmt_usd(saving['usd_before'])} -> "
                                               f"{_fmt_usd(saving['usd_after'])}")
                     if saving["bytes_pct"] <= 0:
-                        saving["summary"] += (". The estimate does not change here (no partitions or the engine "
-                                              "estimates before pruning); the rewrite still lets partitioned tables, "
-                                              "Parquet files and clustered tables skip data.")
+                        saving["summary"] += (". The estimate does not change here (no partitions, or the engine "
+                                              "already handles this); the rewrite matters for partitioned tables, "
+                                              "indexes and Parquet files.")
         if conn is not None:
             result["connection"] = conn.name
 
@@ -429,26 +492,28 @@ def fix(settings: Any, sql: str, connection: str | None = None, dialect: str | N
     remaining_errors = result["lint_after"]["error"]
     if not changes:
         result["status"] = "warn" if remaining_errors or result["lint_after"]["warn"] else "ok"
-        result["next_step"] = ("Nothing could be rewritten automatically. "
+        result["next_step"] = ("Nothing could be rewritten with a same-rows guarantee. "
                                + ("Fix the remaining lint findings by hand (they need a decision, e.g. which date "
                                   "range or which join key)." if result["remaining"] else
                                   "The SQL has no scale problems Gulliver can fix. Call gulliver_preflight."))
         if mode == "safe" and _opt_in_rules(result["remaining"]):
-            result["next_step"] += " Call gulliver_fix with mode='all' for rewrites that change the result slightly."
+            result["next_step"] += (" mode='all' offers rewrites that change the result slightly or need a column "
+                                    "type Gulliver could not check.")
         return result
     result["status"] = "warn" if remaining_errors else "ok"
     if result["same_result"]:
-        result["next_step"] = ("Use fixed_sql: it returns exactly the same rows. Call gulliver_preflight with it.")
+        result["next_step"] = "Use fixed_sql: it returns exactly the same rows. Call gulliver_preflight with it."
     else:
-        result["next_step"] = ("Some rewrites change the result (see changes[].meaning). Tell the human what changed, "
-                               "and check with gulliver_diff before relying on it. Then gulliver_preflight fixed_sql.")
+        result["next_step"] = ("Some rewrites are not proven to keep the rows (see changes[].meaning). Tell the human "
+                               "what changed, check with gulliver_diff before relying on it, then gulliver_preflight "
+                               "fixed_sql.")
     if remaining_errors:
         result["next_step"] += " Lint errors remain (see remaining); fix those by hand first."
     return result
 
 
 def _opt_in_rules(findings: list[dict[str, Any]]) -> bool:
-    return any(f.get("rule") in ("GV002", "GV007", "GV009", "GV012") for f in findings)
+    return any(f.get("rule") in ("GV002", "GV005", "GV007", "GV009", "GV012") for f in findings)
 
 
 def _saving(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any] | None:
