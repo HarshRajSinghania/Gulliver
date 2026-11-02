@@ -7,8 +7,14 @@
 Gulliver gives AI agents a dress rehearsal for SQL: estimate the cost, rehearse on 1% → 3% → 10% of the data, predict what 100% will do, and only run the full query inside a budget. Local-first, open source, MCP + CLI for any agent and any LLM.
 
 [![ci](https://github.com/laaielichter/gulliver/actions/workflows/ci.yml/badge.svg)](https://github.com/laaielichter/gulliver/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/gulliver-mcp)](https://pypi.org/project/gulliver-mcp/)
+[![npm](https://img.shields.io/npm/v/gulliver-mcp)](https://www.npmjs.com/package/gulliver-mcp)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
+
+![Gulliver rehearses a self-join on 1%, 3% and 10% of a 5-million-row table, predicts about 120 million output rows, then rewrites a date filter with the same rows](https://raw.githubusercontent.com/laaielichter/Gulliver/main/docs/demo.svg)
+
+<sub>A real recording of the CLI on the demo database (script: [docs/demo.sh](https://github.com/laaielichter/Gulliver/blob/main/docs/demo.sh)).</sub>
 
 > In *Gulliver's Travels*, Gulliver visits Lilliput, a land of tiny people, and Brobdingnag, a land of giants.
 > Gulliver does the same with your data: it tries your query in Lilliput first, and only walks into Brobdingnag
@@ -81,11 +87,12 @@ Add `--json` to any command for machine-readable output. Exit codes: `0` ok, `1`
 
 ## Use it from your agent (MCP)
 
-Gulliver is an MCP server (stdio or Streamable HTTP). Until it is on PyPI, run it straight from GitHub with
-[uv](https://docs.astral.sh/uv/):
+Gulliver is an MCP server (stdio or Streamable HTTP), published on PyPI and npm. Run it with
+[uv](https://docs.astral.sh/uv/), or through npx (which uses uv under the hood):
 
 ```bash
 uvx gulliver-mcp --dsn path/to/warehouse.duckdb
+npx -y gulliver-mcp --dsn path/to/warehouse.duckdb
 ```
 
 **Claude Code**
@@ -128,6 +135,23 @@ args = ["gulliver-mcp", "--config", "/abs/path/gulliver.toml"]
 
 **No MCP?** Every tool is also a CLI command with `--json`, and `gulliver tools --format openai` or
 `--format gemini` prints ready-made function-calling definitions for the OpenAI or Gemini APIs.
+
+## How it compares
+
+Based on each project's public docs in October 2026; open an issue if something here is wrong or out of date.
+
+| | Gulliver | cost-guard-mcp | Database MCP servers (MCP Toolbox, vendor MCPs) | dbt-mcp / dbt `--sample` | Altimate Code |
+|---|---|---|---|---|---|
+| Cost estimate before running | ✓ (exact on BigQuery, upper bound on Snowflake, heuristic on DuckDB/Postgres) | ✓ BigQuery, Snowflake, Databricks | limits and timeouts, no estimate | – | FinOps tools (Snowflake-focused) |
+| Rehearse on 1%/3%/10% and predict the full run | ✓ | – | – | dbt only, time windows only | – |
+| Scale lint with an auto-fix that proves "same rows" | ✓ | – | – | – | SQL review |
+| Budget gate + human approval + receipt | ✓ | – | read-only modes | – | – |
+| Impact, drift, data-diff, translate, incremental, checks | ✓ | – | – | lineage | many tools |
+| Engines | DuckDB, Postgres, BigQuery (beta), Snowflake (beta) | BigQuery, Snowflake, Databricks | many | dbt projects | Snowflake, dbt and more |
+| Runs locally, open source | ✓ MIT | ✓ | ✓ | ✓ | ✓ MIT |
+
+What Gulliver does **not** do: run your pipelines, replace dbt, or give you a hosted service. There is no
+Databricks or ClickHouse engine yet, and BigQuery and Snowflake have only been tested against fakes so far.
 
 ## Engines
 

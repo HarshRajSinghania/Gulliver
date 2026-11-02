@@ -11,7 +11,7 @@
       "name": "gulliver",
       "source": "./",
       "description": "Preflight, rehearse and budget SQL on big data; impact, drift, data-diff, translate, incremental advice and quality checks.",
-      "version": "0.1.0"
+      "version": "0.2.0"
     }
   ]
 }

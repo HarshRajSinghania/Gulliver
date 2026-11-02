@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-11-02
 
 - New `gulliver_fix` (MCP) / `gulliver fix` (CLI): rewrites SQL to be cheaper and labels every change with a
   guarantee (`same`, `assumes`, `nulls`, `changes`). By default only `same`: date filters such as
@@ -8,8 +8,11 @@
   connection shows a DATE or TIMESTAMP-without-zone column. `mode=all` adds the same rewrite for unknown types
   (`assumes`), NOT IN → NOT EXISTS, approximate distinct counts, UNION ALL and a LIMIT. With a connection it
   estimates before and after.
-- `gulliver_preflight` and `gulliver_lint` include `autofix.fixed_sql` when a same-rows rewrite exists, so the
-  agent gets the fix without an extra call.
+- `gulliver_preflight` includes `autofix.fixed_sql` when a same-rows rewrite exists, so the agent gets the fix
+  without an extra call.
+- The MCP server reports its version to clients (mcp 2.x).
+- npm launcher `gulliver-mcp` (`npx -y gulliver-mcp`), which runs the matching PyPI version through uv.
+- `server.json` for the official MCP Registry; CONTRIBUTING.md and CODE_OF_CONDUCT.md.
 - Claude Code plugin installs the MCP server from PyPI (`uvx gulliver-mcp`).
 
 ## 0.1.0 - 2026-11-01

@@ -1,6 +1,6 @@
 {
   "name": "gulliver",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Test on tiny data before you run on giant data: preflight cost, scale lint with auto-fix, rehearse on 1% -> 10% samples and run inside a budget; plus impact, drift, data-diff, translate, incremental advice and quality checks. MCP server + skill.",
   "author": {
     "name": "laaielichter"

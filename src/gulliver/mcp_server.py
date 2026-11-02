@@ -75,7 +75,10 @@ GATED_RUN = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempoten
 
 
 def build_server() -> Any:
-    server = _Server(name="gulliver", instructions=INSTRUCTIONS)
+    import inspect
+
+    extra = {"version": __version__} if "version" in inspect.signature(_Server.__init__).parameters else {}
+    server = _Server(name="gulliver", instructions=INSTRUCTIONS, **extra)
 
     @server.tool(name="gulliver_status", annotations=READ_ONLY,
                  description="Show connections, budget limits and money spent today. Call this first.")
