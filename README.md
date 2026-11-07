@@ -1,10 +1,11 @@
 <!-- mcp-name: io.github.laaielichter/gulliver -->
 
 <p align="center">
-  <a href="https://laaielichter.github.io/Gulliver/"><img src="https://raw.githubusercontent.com/laaielichter/Gulliver/main/docs/og.png" alt="Gulliver: test on tiny data before you run on giant data. A rehearsal on 1%, 3% and 10% predicts the full run." width="760"></a>
+  <a href="https://laaielichter.github.io/Gulliver/"><img src="https://raw.githubusercontent.com/laaielichter/Gulliver/main/docs/assets/social.jpg" alt="Gulliver: test on tiny data before you run on giant data. A rehearsal on 1%, 3% and 10% predicts the full run." width="760"></a>
 </p>
 
 <h1 align="center">Gulliver</h1>
+<p align="center"><img src="docs/logo.svg" alt="Gulliver compass icon" width="56" height="56"></p>
 
 <p align="center"><b>Test on tiny data before you run on giant data.</b><br>
 An open-source MCP server and CLI that gives AI agents a dress rehearsal for SQL: estimate the cost, fix the slow parts, rehearse on 1% → 3% → 10% of the data, predict what 100% will do, and only run the full query inside a budget.</p>
