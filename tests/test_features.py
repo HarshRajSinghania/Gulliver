@@ -326,6 +326,12 @@ def test_checks_pass_and_fail(settings):
     assert failed == {"unique", "accepted_values", "freshness"}
 
 
+def test_check_reports_a_bad_range_before_querying(settings):
+    r = features.check(settings, "events", ranges=["amount=100:1"])
+    assert r["status"] == "error"
+    assert "min 100 > max 1" in r["error"]
+
+
 def test_check_row_count_change(settings):
     features.check(settings, "users")
     r = features.check(settings, "select * from users where user_id < 10000", max_change_pct=10)
