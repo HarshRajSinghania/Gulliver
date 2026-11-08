@@ -340,6 +340,37 @@ def test_check_row_count_change(settings):
     assert r2["checks"][0]["previous_rows"] == 20_000
 
 
+def test_check_history_is_keyed_on_the_resolved_connection(settings):
+    features.check(settings, "users")
+    r = features.check(settings, "users", connection="default", max_change_pct=10)
+    assert r["checks"][0]["previous_rows"] == 20_000
+
+
+def test_different_connections_keep_separate_histories(settings):
+    from dataclasses import replace
+
+    from gulliver.config import Connection
+
+    features.check(settings, "users")
+    path = settings.connection().params["path"]
+    other = replace(
+        settings,
+        connections={**settings.connections, "second": Connection("second", "duckdb", {"path": path})},
+    )
+    r = features.check(other, "users", connection="second", max_change_pct=10)
+    assert "previous_rows" not in r["checks"][0]
+
+
+def test_a_history_saved_under_the_old_none_key_is_still_read(settings):
+    from gulliver.sqlsafety import sql_fingerprint
+
+    features.check(settings, "users")
+    checks = settings.state_dir / "checks"
+    (checks / f"{sql_fingerprint('default|users|')}.json").rename(checks / f"{sql_fingerprint('None|users|')}.json")
+    r = features.check(settings, "users", max_change_pct=10)
+    assert r["checks"][0]["previous_rows"] == 20_000
+
+
 def test_check_cli_exit_code(demo_db, state):
     assert main(["--dsn", demo_db, "check", "events", "--unique", "user_id"]) == 4
     assert main(["--dsn", demo_db, "check", "events", "--unique", "event_id"]) == 0

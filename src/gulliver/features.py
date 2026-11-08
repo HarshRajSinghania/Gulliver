@@ -490,9 +490,21 @@ def check(settings: Settings, target: str, connection: str | None = None, where:
     source = target.strip().rstrip(";")
     if not all(ch.isalnum() or ch in "._`\"[]-" for ch in source):
         source = f"({_as_query(source)}) AS gv_src"
-    history_key = sql_fingerprint(f"{connection}|{source}|{where or ''}")
+    try:
+        conn_name = settings.connection(connection).name
+    except ConfigError as exc:
+        return _error(str(exc))
+    history_key = sql_fingerprint(f"{conn_name}|{source}|{where or ''}")
     history_path = store.root / "checks" / f"{history_key}.json"
-    previous = json.loads(history_path.read_text()) if history_path.is_file() else None
+    read_path = history_path
+    if connection is None and not history_path.is_file():
+        # A history written before the key used the resolved name spells the
+        # omitted connection as None; keep reading it and migrate on this run.
+        legacy_key = sql_fingerprint(f"None|{source}|{where or ''}")
+        legacy_path = store.root / "checks" / f"{legacy_key}.json"
+        if legacy_path.is_file():
+            read_path = legacy_path
+    previous = json.loads(read_path.read_text()) if read_path.is_file() else None
     result: dict[str, Any] = {"action": "check", "target": target, "where": where}
     try:
         with _engine(settings, connection) as (conn, engine):
