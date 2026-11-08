@@ -93,6 +93,8 @@ def _agent_limits(value: Any) -> dict[str, float]:
     items = value.items() if isinstance(value, dict) else [("default", value)]
     limits: dict[str, float] = {}
     for name, limit in items:
+        if isinstance(limit, bool):
+            raise ConfigError(f"Budget value agent_day_usd[{name!r}]={limit!r} must be a number, not a boolean")
         try:
             number = float(limit)
         except (TypeError, ValueError) as exc:
@@ -113,15 +115,29 @@ def _check_limit(key: str, raw: Any, number: float) -> float:
 
 def _coerce(cls: type, key: str, value: Any) -> Any:
     default = getattr(cls, key)
+    if isinstance(value, bool):
+        raise ConfigError(f"Budget value {key}={value!r} must be a number, not a boolean")
+    if isinstance(default, int):
+        # whole-number limits: a fraction would be silently truncated, and 0 switches a limit off
+        if isinstance(value, int):
+            coerced = value
+        elif isinstance(value, float) and value.is_integer():
+            coerced = int(value)
+        elif isinstance(value, str):
+            try:
+                coerced = int(value)
+            except ValueError as exc:
+                raise ConfigError(f"Budget value {key}={value!r} must be a whole number") from exc
+        else:
+            raise ConfigError(f"Budget value {key}={value!r} must be a whole number")
+        if coerced < 0:
+            raise ConfigError(f"Budget value {key}={value!r} must not be negative; use 0 to switch a limit off")
+        return coerced
     try:
         coerced = type(default)(value)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ConfigError(f"Budget value {key}={value!r} is not a valid {type(default).__name__}") from exc
-    if isinstance(coerced, int):
-        if coerced < 0:
-            raise ConfigError(f"Budget value {key}={value!r} must not be negative; use 0 to switch a limit off")
-    else:
-        _check_limit(key, value, coerced)
+    _check_limit(key, value, coerced)
     return coerced
 
 
