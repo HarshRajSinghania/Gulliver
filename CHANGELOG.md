@@ -26,8 +26,13 @@
 - @HarshRajSinghania for the read-only Postgres role docs (#8), which shaped the section that shipped in 0.3.0.
 - @YinL-k for lint rule GV016 (#23).
 - @ShahadatTest for `gulliver fix -o/--output` (#10) and reading and writing SQL files as UTF-8 (#15).
+- @abu-tahir-0 for five fixes on their first day: strict `check --range` bounds (#85), one row-count history per connection (#86), whole-number and non-boolean budget limits (#84), refusing unknown `gulliver.toml` sections (#83) and GV013 for leading `_` (#82).
 
 ### Fixed
+- `check --range` refuses `nan`, infinite and non-numeric bounds and an inverted `min > max` before any query runs, naming the column. Before, `nan` / `inf` reached the engine as column names and an inverted range silently failed every row (#74, #85).
+- `check --max-change` keys the row-count history on the resolved connection name, so a check with and without `-c default` shares one history. Histories saved under the old key are still read and migrated (#75, #86).
+- Whole-number budget limits (`max_output_rows`, `max_bytes`, `max_repeats`, ...) refuse fractions instead of truncating them (`max_output_rows = 0.5` used to become `0` and switch the limit off), and every budget key refuses `true` / `false` (#76, #84).
+- An unknown top-level key or section in `gulliver.toml`, such as a `[budjet]` typo, is refused with the known sections listed. Before, it was ignored and the default budget applied (#77, #83).
 - In a sampled `gulliver diff` with duplicate keys, "Column counts cover the sampled buckets only." appears once in `notes` instead of twice (#72).
 - The `gulliver_lint` tool description builds its rule range from `RULES`; it said GV001-GV012 while the linter had grown past that (#37).
 - A lint rule id that no rule uses (`disable = ["GV099"]`, a typo for GV009) is refused with "unknown rule", the way unknown names already were. Before, it loaded and turned nothing off (#54).
@@ -40,6 +45,7 @@
 - Receipt ids now carry 64 random bits instead of 32. With 32 bits, two ids made in the same second collided about 1 in 300 times over 5000 ids (seen as a flaky CI test on macOS). The prompt-injection guard recognizes the longer ids.
 
 ### Changed
+- Lint rule GV013 `leading-wildcard-like` also flags `LIKE` / `ILIKE` patterns that start with the `_` wildcard; an escaped `\_` stays unflagged (#78, #82).
 - All 16 MCP tool descriptions now say when to use the tool instead of its siblings, what it costs, what it stores locally and what each status means. Parameter descriptions explain defaults and effects (e.g. `rehearse.method`, `fix.seed`/`cases`, `diff.columns`, `impact.target` matching). Based on Glama's tool scoring.
 
 ## 0.3.0 - 2026-11-02
