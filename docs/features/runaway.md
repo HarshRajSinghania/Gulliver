@@ -114,7 +114,7 @@ $ gulliver spend --by agent            # also: day, table, session, task, connec
 | nightly-job | $0.9000 | 4 | 4 | 140.0 GB |
 | **total** | $5.10 | 35 | | 750.2 GB |
 
-$ gulliver spend --by day --days 30 --format csv > spend.csv
+$ gulliver spend --by day --days 30 --format csv -o spend.csv
 $ gulliver spend --by table --json
 ```
 
