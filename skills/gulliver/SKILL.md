@@ -46,6 +46,7 @@ available; otherwise the CLI `gulliver <command> --json` returns the same JSON.
 | "Which queries cost the most?" | `gulliver_top` | the top query shapes, the same-rows `fixed_sql` and the saving, labeled `exact` or `heuristic` |
 | Before querying a table with customer data | `gulliver_inspect` with `sensitive: true` | which columns are personal data or secrets, and the policy (mask, hash, deny) |
 | Lint a whole repo in CI | `gulliver lint models/ --format sarif` (CLI) | findings with file, line and column; `gulliver fix --check` lists proven rewrites |
+| Clean old state without breaking audit | `gulliver prune --older-than 30d` (CLI) | removes old receipts and expired approvals while appending audit chain records |
 
 Partitioned tables need a `where` with a partition filter for `gulliver_check`, like any other query.
 Diff key samples join parts with `|`, escaping `~` as `~~` and embedded `|` as `~p`; ordinary keys stay unchanged.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import duckdb
@@ -679,3 +679,159 @@ def test_spend_labels_missing_session_as_none_not_old(demo_db, state, capsys):
         res = runaway.spend(s, by=by)
         assert [g[by] for g in res["rows"]] == ["(none)"], res
         assert not any("before Gulliver recorded" in n for n in res["notes"])
+
+
+
+# -- prune and audit preservation -------------------------------------------------------------------------
+def test_prune_removes_old_receipts_and_audit_verify_stays_ok(settings):
+    from gulliver.store import iso, now_utc
+
+    store = core.Store(settings.state_dir)
+    old_time = iso(now_utc() - timedelta(days=40))
+
+    # Save 2 old receipts and 1 recent receipt
+    r1 = store.save_receipt({"receipt_id": "gv-20200101-000000-run-aaa", "action": "run",
+                             "created_at": old_time, "status": "ok", "sql": "select 1"})
+    r2 = store.save_receipt({"receipt_id": "gv-20200101-000001-run-bbb", "action": "run",
+                             "created_at": old_time, "status": "ok", "sql": "select 2"})
+    r3 = store.save_receipt({"receipt_id": "gv-20261108-000002-run-ccc", "action": "run",
+                             "status": "ok", "sql": "select 3"})
+
+    # Prior to prune, audit_verify is ok
+    res_before = runaway.audit_verify(settings)
+    assert res_before["status"] == "ok"
+    assert (store.receipts_dir / f"{r1}.json").exists()
+
+    # Prune older than 30d
+    res_prune = runaway.prune(settings, older_than="30d")
+    assert res_prune["status"] == "ok"
+    assert res_prune["pruned_receipts"] == 2
+    assert not (store.receipts_dir / f"{r1}.json").exists()
+    assert not (store.receipts_dir / f"{r2}.json").exists()
+    assert (store.receipts_dir / f"{r3}.json").exists()
+
+    # After prune, audit_verify stays ok and notes the pruned count
+    res_after = runaway.audit_verify(settings)
+    assert res_after["status"] == "ok"
+    assert any("2 file(s) were pruned" in n for n in res_after["notes"])
+
+
+def test_prune_dry_run_leaves_files_untouched(settings):
+    from gulliver.store import iso, now_utc
+
+    store = core.Store(settings.state_dir)
+    old_time = iso(now_utc() - timedelta(days=40))
+
+    r1 = store.save_receipt({"receipt_id": "gv-20200101-000000-run-dry", "action": "run",
+                             "created_at": old_time, "status": "ok"})
+
+    res_dry = runaway.prune(settings, older_than="30d", dry_run=True)
+    assert res_dry["status"] == "ok"
+    assert res_dry["dry_run"] is True
+    assert res_dry["pruned_receipts"] == 1
+    assert (store.receipts_dir / f"{r1}.json").exists()
+
+    # Audit trail has no prune entry
+    trail = (settings.state_dir / "audit.jsonl").read_text()
+    assert '"kind": "prune"' not in trail
+
+
+def test_prune_keep_last_protects_newest_receipts(settings):
+    from gulliver.store import iso, now_utc
+
+    store = core.Store(settings.state_dir)
+    old_time = iso(now_utc() - timedelta(days=40))
+
+    ids = []
+    for i in range(5):
+        rid = store.save_receipt({"receipt_id": f"gv-20200101-00000{i}-run-k{i}",
+                                 "action": "run", "created_at": old_time, "status": "ok"})
+        ids.append(rid)
+
+    # Prune with keep_last=2 -> keeps 2 newest, prunes 3
+    res = runaway.prune(settings, older_than="30d", keep_last=2)
+    assert res["pruned_receipts"] == 3
+    # 2 newest remain
+    remaining = [p.stem for p in store.receipts_dir.glob("*.json")]
+    assert len(remaining) == 2
+
+
+def test_prune_protects_live_rehearsals_and_approvals(settings):
+    from gulliver.store import iso, now_utc
+
+    store = core.Store(settings.state_dir)
+    now = now_utc()
+    recent = iso(now - timedelta(hours=2))
+    old_time = iso(now - timedelta(days=40))
+
+    # 1. Live rehearsal within 24h
+    r_rehearse = store.save_receipt({"receipt_id": "gv-rehearse-live", "action": "rehearse",
+                                     "created_at": recent, "sql_hash": "h1", "connection": "c1", "status": "ok"})
+    # 2. Receipt with active approval
+    r_approved = store.save_receipt({"receipt_id": "gv-approved-rec", "action": "run",
+                                     "created_at": old_time, "status": "ok"})
+    app_live = {
+        "receipt_id": r_approved, "sql_hash": "h2", "connection": "c1",
+        "approved_at": recent, "expires_at": iso(now + timedelta(hours=20)),
+        "max_cost_usd": 10.0
+    }
+    (store.approvals_dir / f"{r_approved}.json").write_text(json.dumps(app_live), encoding="utf-8")
+    store._audit("approval", r_approved, json.dumps(app_live).encode("utf-8"))
+
+    # 3. Receipt with expired approval
+    r_expired = store.save_receipt({"receipt_id": "gv-expired-rec", "action": "run",
+                                    "created_at": old_time, "status": "ok"})
+    app_exp = {
+        "receipt_id": r_expired, "sql_hash": "h3", "connection": "c1",
+        "approved_at": old_time, "expires_at": old_time,
+        "max_cost_usd": 10.0
+    }
+    (store.approvals_dir / f"{r_expired}.json").write_text(json.dumps(app_exp), encoding="utf-8")
+    store._audit("approval", r_expired, json.dumps(app_exp).encode("utf-8"))
+
+    # Prune older than 1h
+    res = runaway.prune(settings, older_than="1h")
+    assert res["status"] == "ok"
+    # Live rehearsal is protected by REHEARSAL_TTL
+    assert (store.receipts_dir / f"{r_rehearse}.json").exists()
+    # Live approval and its receipt are protected
+    assert (store.receipts_dir / f"{r_approved}.json").exists()
+    assert (store.approvals_dir / f"{r_approved}.json").exists()
+    # Expired approval and its old receipt are pruned
+    assert not (store.receipts_dir / f"{r_expired}.json").exists()
+    assert not (store.approvals_dir / f"{r_expired}.json").exists()
+
+    # Audit verify stays ok
+    verify = runaway.audit_verify(settings)
+    assert verify["status"] == "ok"
+
+
+def test_audit_fails_if_receipt_deleted_manually_without_prune(settings):
+    _some_history(settings)
+    rid = core.get_receipt(settings, "latest", fmt="json")["receipt"]["receipt_id"]
+    (settings.state_dir / "receipts" / f"{rid}.json").unlink()
+
+    res = runaway.audit_verify(settings)
+    assert res["status"] == "fail"
+    assert any(rid in p and "deleted" in p for p in res["problems"])
+
+
+def test_prune_cli(settings, capsys):
+    _some_history(settings)
+    # CLI dry run
+    code = main(["prune", "--older-than", "30d", "--dry-run"])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "[dry-run]" in out
+    assert "Freed:" in out
+
+    # CLI JSON
+    code = main(["prune", "--older-than", "30d", "--dry-run", "--json"])
+    assert code == 0
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["status"] == "ok" and data["dry_run"] is True
+
+    # Bad argument
+    with pytest.raises(SystemExit):
+        main(["prune", "--older-than", "invalid_period"])

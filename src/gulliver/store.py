@@ -82,11 +82,12 @@ class Store:
         self._audit("receipt", rid, data)
         return rid
 
-    def _audit(self, kind: str, item_id: str, data: bytes) -> None:
+    def _audit(self, kind: str, item_id: str, data: bytes, **extra: Any) -> None:
         from .audit import append, content_hash
 
-        append(self.root / "audit.jsonl", {"at": iso(now_utc()), "kind": kind, "id": item_id,
-                                           "sha256": content_hash(data)})
+        entry = {"at": iso(now_utc()), "kind": kind, "id": item_id,
+                 "sha256": content_hash(data), **extra}
+        append(self.root / "audit.jsonl", entry)
 
     def load_receipt(self, receipt_id: str) -> dict[str, Any] | None:
         safe = Path(receipt_id).name
@@ -111,11 +112,136 @@ class Store:
     def latest_rehearsal(self, sql_hash: str, connection: str) -> dict[str, Any] | None:
         cutoff = now_utc() - REHEARSAL_TTL
         for rec in self.receipts():
+            try:
+                cat = parse_iso(rec["created_at"]) if "created_at" in rec else None
+            except (ValueError, KeyError):
+                cat = None
+            if cat and cat < cutoff:
+                break
             if (rec.get("action") == "rehearse" and rec.get("sql_hash") == sql_hash
                     and rec.get("connection") == connection and rec.get("status") in ("ok", "warn", "block")
-                    and parse_iso(rec["created_at"]) >= cutoff):
+                    and cat and cat >= cutoff):
                 return rec
         return None
+
+    def prune(self, older_than: timedelta, keep_last: int | None = None,
+              dry_run: bool = False) -> dict[str, Any]:
+        """Remove receipts older than `older_than` and expired approvals, appending an audit record for each.
+
+        Receipts needed by an active approval (expires_at > now) or an active rehearsal
+        (within REHEARSAL_TTL) are never pruned. With `keep_last`, keeps at least N newest receipts.
+        """
+        now = now_utc()
+        cutoff = now - older_than
+
+        live_receipt_ids: set[str] = set()
+        expired_approval_paths: list[Path] = []
+        if self.approvals_dir.is_dir():
+            for p in sorted(self.approvals_dir.glob("*.json")):
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    rid = str(data.get("receipt_id") or p.stem)
+                    exp = parse_iso(data["expires_at"]) if "expires_at" in data else None
+                    if exp and exp > now:
+                        live_receipt_ids.add(rid)
+                    else:
+                        expired_approval_paths.append(p)
+                except (OSError, ValueError, KeyError):
+                    continue
+
+        kept_paths: list[Path] = []
+        to_prune_receipts: list[Path] = []
+        if self.receipts_dir.is_dir():
+            all_receipts = sorted(self.receipts_dir.glob("*.json"),
+                                  key=lambda p: (p.name[:18], _mtime(p), p.name), reverse=True)
+            for i, p in enumerate(all_receipts):
+                if keep_last is not None and i < keep_last:
+                    kept_paths.append(p)
+                    continue
+                try:
+                    rec = json.loads(p.read_text(encoding="utf-8"))
+                    cat = parse_iso(rec["created_at"]) if "created_at" in rec else None
+                    rid = str(rec.get("receipt_id") or p.stem)
+                    action = rec.get("action")
+                except (OSError, ValueError, KeyError):
+                    cat = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+                    rid = p.stem
+                    action = None
+
+                if cat and cat >= cutoff:
+                    kept_paths.append(p)
+                    continue
+
+                if rid in live_receipt_ids:
+                    kept_paths.append(p)
+                    continue
+
+                if action == "rehearse" and cat and cat >= (now - REHEARSAL_TTL):
+                    kept_paths.append(p)
+                    continue
+
+                to_prune_receipts.append(p)
+
+        to_prune_approvals = expired_approval_paths
+
+        oldest_kept: str | None = None
+        if kept_paths:
+            kept_times = []
+            for p in kept_paths:
+                try:
+                    r = json.loads(p.read_text(encoding="utf-8"))
+                    if "created_at" in r:
+                        kept_times.append(str(r["created_at"]))
+                except Exception:
+                    pass
+            if kept_times:
+                oldest_kept = min(kept_times)
+
+        bytes_freed = 0
+        for p in to_prune_receipts + to_prune_approvals:
+            try:
+                bytes_freed += p.stat().st_size
+            except OSError:
+                pass
+
+        if not dry_run:
+            self._ensure()
+            for p in to_prune_receipts:
+                try:
+                    raw = p.read_bytes()
+                    rid = p.stem
+                    self._audit("prune", rid, raw, target="receipt",
+                                reason=f"older than {older_than}")
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    continue
+            for p in to_prune_approvals:
+                try:
+                    raw = p.read_bytes()
+                    aid = p.stem
+                    self._audit("prune", aid, raw, target="approval",
+                                reason="expired")
+                    p.unlink(missing_ok=True)
+                except OSError:
+                    continue
+
+        if dry_run:
+            next_step = "Dry run: re-run without --dry-run to remove these files and append audit prune entries."
+        elif to_prune_receipts or to_prune_approvals:
+            next_step = "Pruned. Check the audit trail with gulliver audit verify."
+        else:
+            next_step = "Intact: no receipts or approvals matched the prune criteria."
+
+        return {
+            "status": "ok",
+            "pruned_receipts": len(to_prune_receipts),
+            "pruned_approvals": len(to_prune_approvals),
+            "pruned_files": len(to_prune_receipts) + len(to_prune_approvals),
+            "bytes_freed": bytes_freed,
+            "oldest_kept": oldest_kept,
+            "dry_run": dry_run,
+            "next_step": next_step,
+        }
 
     # -- approvals -----------------------------------------------------------------
     def approve(self, receipt_id: str, note: str = "", channel: str = "cli",
