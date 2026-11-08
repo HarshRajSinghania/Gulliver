@@ -53,8 +53,8 @@ RULE_DOCS: dict[str, tuple[str, str, str, str]] = {
               "Add PARTITION BY a key.", "none"),
     "GV012": ("info", "NOT IN (subquery) returns nothing when the subquery has a NULL, and often plans badly.",
               "Use NOT EXISTS.", "mode=all (same rows unless the subquery returns NULL)"),
-    "GV013": ("info", "LIKE / ILIKE with a leading wildcard ('%x') cannot use an index or min/max statistics, so it "
-                      "scans every value.",
+    "GV013": ("info", "LIKE / ILIKE with a leading wildcard (`%` or `_`) cannot use an index or min/max statistics, "
+                      "so it scans every value.",
               "Filter on another (partition or indexed) column first, or use full-text / n-gram search.", "none"),
     "GV014": ("info", "An output column is personal data or a secret (by name, through aliases/CTEs/SELECT *, or "
                       "by earlier value tags). info for personal data or a masked secret, warn for a secret that "
@@ -114,6 +114,7 @@ def render_rules_text() -> str:
 # Every rule in rules() still appears; missing keys fall back to name + default_severity.
 RULE_MARKDOWN: dict[str, tuple[str, str]] = {
     "GV003": ("cartesian-join", "error (no condition) / warn (CROSS JOIN)"),
+    "GV013": ("leading-wildcard-like (`%` or `_`)", "info"),
     "GV014": ("sensitive-column-in-output",
               "info (personal data, masked secret) / warn (unmasked secret)"),
     "GV900": ("parse-error (file lint only)", "warn"),

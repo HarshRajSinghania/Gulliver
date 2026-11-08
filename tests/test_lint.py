@@ -156,8 +156,13 @@ def test_scalar_subquery_in_select():
 
 def test_leading_wildcard_like_is_info():
     assert rules("select a from t where b like '%x'")["GV013"] == "info"
+    assert rules("select a from t where b like '_x'")["GV013"] == "info"
     assert rules("select a from t where b ilike '%x%' limit 5")["GV013"] == "info"
+    assert rules("select a from t where b ilike '__x%' limit 5")["GV013"] == "info"
     assert "GV013" not in rules("select a from t where b like 'x%'")
+    assert "GV013" not in rules("select a from t where b like 'a_c'")
+    # an escaped underscore is a literal prefix, not a wildcard
+    assert "GV013" not in rules("select a from t where b like '\\_x' escape '\\'")
 
 
 @pytest.mark.parametrize("dialect", ["duckdb", "postgres", "bigquery"])

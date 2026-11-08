@@ -372,7 +372,7 @@ def lint(statement_tree: exp.Expression, dialect: str = "duckdb",
     # GV013 LIKE / ILIKE with a leading wildcard
     for like in tree.find_all(exp.Like, exp.ILike):
         pattern = like.expression
-        if isinstance(pattern, exp.Literal) and pattern.is_string and pattern.name.startswith("%"):
+        if isinstance(pattern, exp.Literal) and pattern.is_string and pattern.name[:1] in ("%", "_"):
             add("GV013", "info",
                 f"{like.sql(dialect=dialect)} starts with a wildcard, so no index or min/max statistics can help: "
                 "it scans every value.",

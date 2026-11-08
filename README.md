@@ -739,7 +739,7 @@ The action posts one PR comment and updates it on every push, writes the job sum
 | GV010 | scalar-subquery-in-select | info |
 | GV011 | window-without-partition | warn |
 | GV012 | not-in-subquery | info |
-| GV013 | leading-wildcard-like | info |
+| GV013 | leading-wildcard-like (`%` or `_`) | info |
 | GV014 | sensitive-column-in-output | info (personal data, masked secret) / warn (unmasked secret) |
 | GV015 | fan-trap | warn |
 | GV016 | order-by-random | warn |
