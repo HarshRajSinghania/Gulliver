@@ -17,6 +17,8 @@ gulliver lint models/ --json                            # everything, for script
 gulliver lint models/ --fail-on warn                    # fail on warnings too (default: error)
 gulliver lint . --exclude 'models/legacy/*' --warn-unused-ignores
 gulliver lint models/ --metadata -c warehouse           # read partitions and column types (free metadata)
+gulliver lint models/ --write-baseline gulliver-baseline.json   # record today's findings, exit 0
+gulliver lint models/ --baseline gulliver-baseline.json         # report and fail only on new findings
 
 gulliver rules [--json]                                 # every rule: id, name, default severity, autofix
 
@@ -26,7 +28,7 @@ gulliver fix --write models/ -c warehouse               # apply same-rows rewrit
 
 `gulliver lint` with one SQL string (or `-f file.sql`, or stdin) works exactly as before. A value that
 exists on disk, more than one value, a files-only flag (`--format sarif|github|gitlab|junit`, `--fail-on`,
-`--exclude`, `--warn-unused-ignores`, `--metadata`, `-o`), or one value that looks like a path (no spaces, and
+`--exclude`, `--warn-unused-ignores`, `--metadata`, `--baseline`, `--write-baseline`, `-o`), or one value that looks like a path (no spaces, and
 a bare word, or it ends in `/` or `.sql`, or holds a `/`) switches to files mode. So a mistyped or missing
 `models/` gives `Not found` and exit 1, not a SQL parse error.
 
@@ -124,6 +126,36 @@ A rule list Gulliver cannot read ignores nothing and is always reported as `GV90
 `ignore(GV001)`). A typo therefore never turns into "ignore every rule".
 `--warn-unused-ignores` also reports ignore comments that no longer ignore anything (`GV901 unused-ignore`).
 
+## Baseline
+
+Adopting the linter on a repo with hundreds of models gives a long list on day one. A baseline records the
+findings that exist today, so only new ones are reported and fail the build. The old ones can be fixed over time.
+
+```bash
+gulliver lint models/ --write-baseline gulliver-baseline.json   # write the file, exit 0
+gulliver lint models/ --baseline gulliver-baseline.json         # from now on: new findings only
+```
+
+Put the paths before `--write-baseline`; it takes the next word as its file name. Without a file name it uses
+`[lint] baseline`. Commit the baseline file.
+
+- **What is stored.** One entry per finding: path, rule, a fingerprint and a count. No SQL text. The file is
+  sorted JSON, so it diffs cleanly. The fingerprint is path + rule + the whitespace-normalised source line (the
+  same one the SARIF and GitLab outputs use), so a finding still matches after lines above it move.
+- **What counts as new.** A second copy of a baselined line is new (the count is exceeded), and so is an edited
+  line.
+- **Paths.** Stored relative to the folder of the baseline file, with forward slashes, so one file works on
+  Windows and Linux runners, from the repo root (pre-commit) and from a subfolder. `[lint] baseline` is
+  relative to `gulliver.toml`; `--baseline` is relative to where you run the command.
+- **Result.** Matching findings move to `ignored_findings` with `ignored_by: "baseline"`. They do not count
+  toward `failing` or the exit code, and they are left out of the sarif, github, gitlab and junit output. The
+  JSON result has `baselined` and `baseline_fixed` (baseline entries that no longer match). `baseline_fixed`
+  counts only the files that were linted, so a pre-commit run on one file does not report the rest as fixed.
+  The text summary says `(12 in baseline, 3 fixed: run --write-baseline to shrink it)`.
+- **Shrinking it.** Run `--write-baseline` again after fixing findings. It records what is left today, so it
+  also accepts any new findings: use it on purpose, not in CI.
+- **Errors.** A baseline file that is missing or is not valid JSON is an error (exit 1), not an empty baseline.
+
 ## Configuration
 
 ```toml
@@ -134,6 +166,7 @@ fail_on = "error"                           # error | warn | info | never
 exclude = ["models/legacy/*", "seeds"]
 dialect = "bigquery"                        # default: --dialect, then the connection's engine, then duckdb
 warn_unused_ignores = true
+baseline = "gulliver-baseline.json"         # relative to gulliver.toml; see Baseline
 ```
 
 `[lint]` applies to files mode only. `gulliver lint "SQL"`, preflight and the run gate are not changed by it.

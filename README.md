@@ -771,6 +771,7 @@ gulliver inspect [TABLE] [--sensitive] [--scan N]   biggest tables, one table's 
 gulliver lint SQL [--dialect D]       scale lint of one query
 gulliver lint PATH... [--format text|json|sarif|github|gitlab|junit] [--fail-on error|warn|info|never]
                       [--exclude GLOB] [--warn-unused-ignores] [--metadata] [-o PATH]   files and folders (CI)
+                      [--baseline FILE] [--write-baseline [FILE]]   report only findings not in the baseline
 gulliver rules [--format text|markdown|json]   every lint rule: id, name, severity, autofix
 gulliver fix SQL [--dialect D] [--mode safe|all] [--limit N] [-o PATH]   rewrite SQL, say what changes
 gulliver fix SQL --verify [--cases 200] [--seed 0] [--timezone TZ]      test every rewrite on generated data

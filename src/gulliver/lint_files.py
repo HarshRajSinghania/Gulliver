@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import bisect
 import fnmatch
+import hashlib
+import json
 import os
 import re
 from collections.abc import Iterable
@@ -65,14 +67,15 @@ class LintConfig:
     exclude: tuple[str, ...] = ()
     dialect: str | None = None
     warn_unused_ignores: bool = False
+    baseline: str | None = None   # path of the baseline file (made relative to gulliver.toml by load_lint_config)
 
     def as_dict(self) -> dict[str, Any]:
         return {"disable": sorted(self.disable), "severity": dict(self.severity), "fail_on": self.fail_on,
                 "exclude": list(self.exclude), "dialect": self.dialect,
-                "warn_unused_ignores": self.warn_unused_ignores}
+                "warn_unused_ignores": self.warn_unused_ignores, "baseline": self.baseline}
 
 
-_LINT_KEYS = {"disable", "severity", "fail_on", "exclude", "dialect", "warn_unused_ignores"}
+_LINT_KEYS = {"disable", "severity", "fail_on", "exclude", "dialect", "warn_unused_ignores", "baseline"}
 
 
 def _rule_id(token: str) -> str | None:
@@ -90,7 +93,7 @@ def _rule_id(token: str) -> str | None:
     return by_name.get(t.lower())
 
 
-def lint_config_from_mapping(data: dict[str, Any]) -> LintConfig:
+def lint_config_from_mapping(data: dict[str, Any], base_dir: Path | None = None) -> LintConfig:
     unknown = set(data) - _LINT_KEYS
     if unknown:
         raise ConfigError(f"Unknown [lint] keys: {', '.join(sorted(unknown))}. Known: {', '.join(sorted(_LINT_KEYS))}")
@@ -124,10 +127,17 @@ def lint_config_from_mapping(data: dict[str, Any]) -> LintConfig:
     dialect = data.get("dialect")
     if dialect is not None and str(dialect).lower() not in DIALECTS:
         raise ConfigError(f"[lint] dialect = '{dialect}': use {', '.join(DIALECTS)}.")
+    baseline = data.get("baseline")
+    if baseline is not None:
+        if not isinstance(baseline, str) or not baseline.strip():
+            raise ConfigError('[lint] baseline: give a file path, e.g. "gulliver-baseline.json".')
+        # relative to gulliver.toml, so the same setting works from any folder
+        if base_dir is not None and not Path(baseline).is_absolute():
+            baseline = str(base_dir / baseline)
     return LintConfig(disable=frozenset(rules(data.get("disable"), "disable")), severity=severity, fail_on=fail_on,
                       exclude=tuple(str(e) for e in exclude),
                       dialect=str(dialect).lower() if dialect else None,
-                      warn_unused_ignores=bool(data.get("warn_unused_ignores", False)))
+                      warn_unused_ignores=bool(data.get("warn_unused_ignores", False)), baseline=baseline)
 
 
 def load_lint_config(config_path: str | os.PathLike[str] | None = None) -> LintConfig:
@@ -137,7 +147,7 @@ def load_lint_config(config_path: str | os.PathLike[str] | None = None) -> LintC
         return LintConfig()
     with path.open("rb") as fh:
         data = tomllib.load(fh)
-    return lint_config_from_mapping(dict(data.get("lint") or {}))
+    return lint_config_from_mapping(dict(data.get("lint") or {}), path.resolve().parent)
 
 
 # -- finding files ------------------------------------------------------------------------------------
@@ -834,6 +844,106 @@ def lint_file(file: Path, dialect: str = "duckdb", config: LintConfig | None = N
     return result
 
 
+# -- baseline ------------------------------------------------------------------------------------------------
+BASELINE_VERSION = 1
+
+
+def fingerprint_base(path: str, rule: str, snippet: str) -> str:
+    """Stable across line moves: path + rule + the whitespace-normalised source line."""
+    return hashlib.sha1(f"{path}\0{rule}\0{' '.join(snippet.split())}".encode(), usedforsecurity=False).hexdigest()
+
+
+def fingerprint(f: FileFinding, seen: dict[str, int]) -> str:
+    """fingerprint_base, plus a counter so repeats of the same line get distinct ids (SARIF, GitLab)."""
+    base = fingerprint_base(f.path, f.rule, f.snippet)
+    seen[base] = seen.get(base, 0) + 1
+    return base if seen[base] == 1 else hashlib.sha1(f"{base}:{seen[base]}".encode(), usedforsecurity=False).hexdigest()
+
+
+def _baseline_path(file: Path, root: Path) -> str:
+    """The file's path relative to the baseline's folder, with forward slashes (same on Windows and Linux)."""
+    resolved = file.resolve()
+    try:
+        return resolved.relative_to(root).as_posix()
+    except ValueError:
+        if resolved.drive == root.drive:
+            return Path(os.path.relpath(resolved, root)).as_posix()
+        return resolved.as_posix()
+
+
+def _baseline_key(path: str, f: FileFinding) -> tuple[str, str, str]:
+    return path, f.rule, fingerprint_base(path, f.rule, f.snippet)
+
+
+def baseline_entries(results: list[FileResult], root: Path) -> list[dict[str, Any]]:
+    """One entry per (path, rule, fingerprint) with a count. No SQL text. Sorted, so the file is stable."""
+    counts: dict[tuple[str, str, str], int] = {}
+    for r in results:
+        path = _baseline_path(r.file, root)
+        for f in r.findings:
+            key = _baseline_key(path, f)
+            counts[key] = counts.get(key, 0) + 1
+    return [{"path": p, "rule": rule, "fingerprint": fp, "count": n} for (p, rule, fp), n in sorted(counts.items())]
+
+
+def write_baseline(path: str | os.PathLike[str], entries: list[dict[str, Any]]) -> None:
+    doc = {"version": BASELINE_VERSION, "entries": entries}
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+
+
+def read_baseline(path: str | os.PathLike[str]) -> list[dict[str, Any]]:
+    """The baseline entries. A missing or unreadable file is an error, never an empty baseline."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        raise ValueError(f"Baseline file not found: {path}. Create it with --write-baseline.") from None
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Baseline file {path} is not valid JSON ({exc}). Recreate it with --write-baseline.") from None
+    entries = doc.get("entries") if isinstance(doc, dict) else None
+    if not isinstance(entries, list) or doc.get("version") != BASELINE_VERSION:
+        raise ValueError(f"Baseline file {path} is not a Gulliver baseline (version {BASELINE_VERSION}). "
+                         "Recreate it with --write-baseline.")
+    for e in entries:
+        if not (isinstance(e, dict) and isinstance(e.get("path"), str) and isinstance(e.get("rule"), str)
+                and isinstance(e.get("fingerprint"), str) and isinstance(e.get("count"), int) and e["count"] > 0):
+            raise ValueError(f"Baseline file {path} has a malformed entry. Recreate it with --write-baseline.")
+    return entries
+
+
+def apply_baseline(results: list[FileResult], entries: list[dict[str, Any]], root: Path) -> tuple[int, int]:
+    """Move findings that the baseline already holds to `ignored` (ignored_by "baseline").
+
+    Each entry covers `count` findings, so a copy of a baselined line beyond that count is new. Returns
+    (baselined, fixed): fixed counts leftover entries of the files that were linted in this run only.
+    """
+    left: dict[tuple[str, str, str], int] = {}
+    for e in entries:
+        key = (e["path"], e["rule"], e["fingerprint"])
+        left[key] = left.get(key, 0) + e["count"]
+    linted = {_baseline_path(r.file, root) for r in results}
+    baselined = 0
+    for r in results:
+        path = _baseline_path(r.file, root)
+        kept: list[FileFinding] = []
+        for f in r.findings:
+            key = _baseline_key(path, f)
+            if left.get(key, 0) > 0:
+                left[key] -= 1
+                f.ignored_by = "baseline"
+                r.ignored.append(f)
+                baselined += 1
+            else:
+                kept.append(f)
+        r.findings = kept
+        # same rule as lint_file: no rewrite is offered for a finding that is not reported
+        reported = {(f.statement, f.rule) for f in kept}
+        r.fixes = [x for x in r.fixes if all((x.statement, rule) in reported for rule in x.rules)]
+    fixed = sum(n for (path, _, _), n in left.items() if path in linted)
+    return baselined, fixed
+
+
 # -- many files -------------------------------------------------------------------------------------------
 def fails(severity: str, fail_on: str) -> bool:
     if fail_on == "never":
@@ -843,7 +953,8 @@ def fails(severity: str, fail_on: str) -> bool:
 
 def lint_paths(paths: list[str], dialect: str | None = None, config: LintConfig | None = None,
                fail_on: str | None = None, exclude: Iterable[str] = (), warn_unused_ignores: bool | None = None,
-               metadata: Metadata | None = None) -> dict[str, Any]:
+               metadata: Metadata | None = None, baseline: str | os.PathLike[str] | None = None,
+               write_baseline_to: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     """Lint files and folders. Returns a JSON-ready dict, plus the FileResult objects for the formatters under
     the private key `_results` (public() drops it)."""
     config = config or LintConfig()
@@ -856,6 +967,22 @@ def lint_paths(paths: list[str], dialect: str | None = None, config: LintConfig 
         return {"status": "error", "error": "Not found: " + ", ".join(missing),
                 "next_step": "Give existing .sql files or folders (or one SQL string in quotes)."}
     results = [lint_file(f, dialect, config, metadata, warn_unused_ignores=warn_unused_ignores) for f in files]
+    baseline = write_baseline_to or baseline or config.baseline
+    baselined = baseline_fixed = 0
+    written: int | None = None
+    if baseline:
+        root = Path(baseline).resolve().parent
+        try:
+            if write_baseline_to:   # record today's findings, then apply them: this run reports nothing new
+                entries = baseline_entries(results, root)
+                write_baseline(write_baseline_to, entries)
+                written = sum(e["count"] for e in entries)
+            else:
+                entries = read_baseline(baseline)
+        except (OSError, ValueError) as exc:
+            return {"status": "error", "error": str(exc),
+                    "next_step": "Fix the baseline path, or recreate the file with --write-baseline."}
+        baselined, baseline_fixed = apply_baseline(results, entries, root)
     findings = [f for r in results for f in r.findings]
     counts = {s: sum(1 for f in findings if f.severity == s) for s in SEVERITIES}
     failing = sum(1 for f in findings if fails(f.severity, fail_on))
@@ -869,15 +996,22 @@ def lint_paths(paths: list[str], dialect: str | None = None, config: LintConfig 
         "skipped_statements": sum(len(r.skipped) for r in results),
         "counts": counts,
         "failing": failing,
-        "ignored": sum(len(r.ignored) for r in results),
+        "ignored": sum(1 for r in results for f in r.ignored if f.ignored_by != "baseline"),
         "findings": [f.as_dict() for f in findings],
         "ignored_findings": [f.as_dict() for r in results for f in r.ignored],
         "fixes": [x.as_dict() for x in fixes],
         "_results": results,
     }
+    if baseline:
+        out["baselined"] = baselined
+        out["baseline_fixed"] = baseline_fixed
     if metadata is not None and metadata.notes:
         out["notes"] = metadata.notes
-    if not results:
+    if written is not None:
+        out["status"] = "ok"
+        out["next_step"] = (f"Wrote {written} finding(s) to {write_baseline_to}. Commit it: from now on only new "
+                            "findings are reported.")
+    elif not results:
         out["status"] = "ok"
         out["next_step"] = "No .sql files found. Give a folder or files (check exclude)."
     elif failing:

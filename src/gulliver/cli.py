@@ -211,6 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exclude", action="append", metavar="GLOB", help="Files mode: skip matching paths (repeatable)")
     p.add_argument("--warn-unused-ignores", action="store_true", help="Files mode: report ignore comments that "
                                                                       "ignore nothing (GV901)")
+    p.add_argument("--baseline", metavar="PATH", help="Files mode: report only findings that are not in this "
+                                                      "baseline file (default: [lint] baseline)")
+    p.add_argument("--write-baseline", nargs="?", const=True, default=None, metavar="PATH",
+                   help="Files mode: record the current findings in PATH (default: [lint] baseline) and exit 0")
     p.add_argument("--metadata", action="store_true", help="Files mode: read table metadata from the connection "
                                                            "(partitions for GV004, column types for same-rows fixes)")
     p.add_argument("-o", "--output", metavar="PATH", help="Files mode: write the report to PATH (e.g. gulliver.sarif)")
@@ -413,7 +417,7 @@ def _main(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
 
             files_flags = args.command == "lint" and bool(
                 args.format not in (None, "text", "json") or args.fail_on or args.exclude or args.warn_unused_ignores
-                or args.metadata or args.output)
+                or args.metadata or args.output or args.baseline or args.write_baseline)
             if args.command == "fix" and (args.check or args.write):
                 if not args.sql:
                     raise ValueError("gulliver fix --check/--write needs .sql files or folders")
