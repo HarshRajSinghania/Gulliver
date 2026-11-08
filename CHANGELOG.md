@@ -11,19 +11,24 @@
 - Lint rule GV018 `count-for-existence`: flags `(SELECT COUNT(*) ...)` compared with zero (`> 0`, `>= 1`, `<> 0`, `= 0`, `< 1` and the mirrored `0 < ...`, also with `COUNT(1)`) and suggests `EXISTS`, or `NOT EXISTS` for `= 0` and `< 1` (#31).
 - Result guard: npm (`npm_...`), PyPI (`pypi-...`) and Hugging Face (`hf_...`) tokens are tagged `api_key` and masked inside free text (#38).
 - `gulliver calibration [--days N] [-c NAME]` and the `gulliver://calibration` MCP resource show how often rehearsal ranges held up against real runs, per metric and confidence level. New run receipts store `low`, `high` and `confidence` in `predicted_vs_actual` (#47).
+- `gulliver receipt --list [--limit N] [--status STATUS] [--json]` lists recent receipts newest first, with summary fields only (no preview rows), so you can find a receipt without knowing its id (#39, #60).
+- `gulliver diff` says which columns differ for changed keys ("Rows differ in: country (1 key)"), computed inside the existing keys query, so no extra queries run and no values leave the engine (#46, #69).
 
 ### Thanks
 - @bfs2021 for refusing NaN, infinite and negative budget limits (#40) and the GV001 fix for EXISTS subqueries (#50).
 - @mayankdhingra02 for the guarded samples in `gulliver check` (#49) and the rehearsal calibration report (#61).
-- @shaw778 for the derived `gulliver_lint` rule range (#41), the npm, PyPI and Hugging Face token shapes (#58) and lint rule GV017 (#59).
+- @shaw778 for the derived `gulliver_lint` rule range (#41), the npm, PyPI and Hugging Face token shapes (#58), lint rule GV017 (#59), column-level `gulliver diff` (#69) and its follow-up test and note fix (#72).
 - @ariktadas144 for the non-English prompt-injection signal (#62).
 - @Doomguy-BFG9000 for escaping `|` and `~` in composite keys and diffs (#53).
-- @17302513901yh-lang for refusing unknown lint rule ids (#54).
+- @17302513901yh-lang for refusing unknown lint rule ids (#54) and lint rule GV018 (#66), and @ariktadas144 for the careful review of it.
+- @Muhtasim-Munif-Fahim for `gulliver rules --format markdown|json` and the generated README rule table (#68).
+- @Abhishekpandey123-git for `gulliver receipt --list` (#60).
 - @HarshRajSinghania for the read-only Postgres role docs (#8), which shaped the section that shipped in 0.3.0.
 - @YinL-k for lint rule GV016 (#23).
 - @ShahadatTest for `gulliver fix -o/--output` (#10) and reading and writing SQL files as UTF-8 (#15).
 
 ### Fixed
+- In a sampled `gulliver diff` with duplicate keys, "Column counts cover the sampled buckets only." appears once in `notes` instead of twice (#72).
 - The `gulliver_lint` tool description builds its rule range from `RULES`; it said GV001-GV012 while the linter had grown past that (#37).
 - A lint rule id that no rule uses (`disable = ["GV099"]`, a typo for GV009) is refused with "unknown rule", the way unknown names already were. Before, it loaded and turned nothing off (#54).
 - Composite uniqueness checks and data diffs escape `~` and `|` in each text part before joining, so embedded separators no longer make distinct keys or rows compare equal (#36).
