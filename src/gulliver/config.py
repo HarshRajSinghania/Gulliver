@@ -29,6 +29,12 @@ class ConfigError(ValueError):
     """Raised when the configuration cannot be used."""
 
 
+# top-level keys of gulliver.toml; [lint] is read in lint_files.py and [review] in review.py
+KNOWN_TOP_LEVEL = frozenset(
+    {"connections", "default_connection", "budget", "approval", "state_dir", "lint", "review"}
+)
+
+
 @dataclass(frozen=True)
 class Budget:
     """Spending and safety limits. Money is in US dollars."""
@@ -220,6 +226,12 @@ def load_settings(
     if path:
         with path.open("rb") as fh:
             data = tomllib.load(fh)
+        unknown = set(data) - KNOWN_TOP_LEVEL
+        if unknown:
+            raise ConfigError(
+                f"Unknown section(s) in gulliver.toml: {', '.join(sorted(unknown))}. "
+                f"Known: {', '.join(sorted(KNOWN_TOP_LEVEL))}."
+            )
 
     connections: dict[str, Connection] = {}
     for conn_name, conn_data in (data.get("connections") or {}).items():

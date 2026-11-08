@@ -329,6 +329,8 @@ agent_day_usd = 5           # per agent per day (optional)
 
 The example file also shows the settings for the read-only gate (`allowed_paths`, `allow_remote`,
 `allow_functions`), the result guard (`policy`), the runaway guard, `[lint]`, `[review]` and `[approval]`.
+An unknown top-level key or section is refused, so a typo such as `[budjet]` cannot silently fall back to the
+default budget.
 
 ### A read-only Postgres role
 

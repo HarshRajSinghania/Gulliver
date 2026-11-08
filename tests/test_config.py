@@ -45,6 +45,37 @@ def test_unknown_budget_key(tmp_path, monkeypatch):
         load_settings()
 
 
+def test_unknown_top_level_section_is_refused(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "gulliver.toml").write_text("[budjet]\nmax_query_usd = 0.0001\n")
+    with pytest.raises(ConfigError, match=r"Unknown section\(s\) in gulliver.toml: budjet\. Known: .*budget"):
+        load_settings()
+    # a typo without a table header is the same mistake
+    (tmp_path / "gulliver.toml").write_text("budjet = 0.0001\n")
+    with pytest.raises(ConfigError, match="budjet"):
+        load_settings()
+
+
+def test_every_known_section_loads(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "gulliver.toml").write_text(
+        'default_connection = "local"\n'
+        'state_dir = ".state"\n'
+        "[connections.local]\nengine = \"duckdb\"\npath = \":memory:\"\n"
+        "[budget]\nmax_query_usd = 2.5\n"
+        "[approval]\nchannel = \"cli\"\n"
+        "[lint]\nfail_on = \"error\"\n"
+        "[review]\nfail_on = \"cost\"\n"
+    )
+    s = load_settings()
+    assert s.default_connection == "local"
+    assert s.state_dir == Path(".state")
+    assert s.budget.max_query_usd == 2.5
+    assert s.approval_channel == "cli"
+
+
 def test_default_is_in_memory_duckdb(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GULLIVER_DSN", raising=False)
