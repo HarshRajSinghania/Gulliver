@@ -403,6 +403,17 @@ def test_cli_spend_output_file(demo_db, state, tmp_path, capsys):
     assert expected.startswith("agent,usd") and "out-bot" in expected
 
 
+def test_spend_refuses_a_window_below_one_day(settings, demo_db, capsys):
+    for days in (0, -5):
+        res = runaway.spend(settings, by="agent", days=days)
+        assert res["status"] == "error" and "--days" in res["error"] and res["next_step"]
+        assert main(["--dsn", demo_db, "spend", "--days", str(days), "--json"]) == 1
+        assert json.loads(capsys.readouterr().out)["status"] == "error"
+        assert main(["--dsn", demo_db, "spend", "--days", str(days)]) == 1
+        assert "--days" in capsys.readouterr().out
+    assert runaway.spend(settings, by="agent", days=1)["status"] == "ok"  # one day is still a window
+
+
 # -- audit chain ------------------------------------------------------------------------------------------
 def _some_history(settings):
     core.preflight(settings, Q)

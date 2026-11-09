@@ -119,6 +119,8 @@ $ gulliver spend --by table --json
 ```
 
 `--by table` splits a query that reads several tables evenly between them, so the rows add up to the total.
+`--days` must be at least 1: a smaller value returns `status: error` with a `next_step` and exits 1 instead of
+counting a one-day window.
 Lines written before this version have no agent and show as `(unknown)`. Current lines without a session or
 task (CLI calls without `GULLIVER_SESSION` / `GULLIVER_TASK`), and queries that read no table, show as `(none)`.
 
