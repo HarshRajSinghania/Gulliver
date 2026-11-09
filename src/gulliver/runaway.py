@@ -35,7 +35,7 @@ from sqlglot import exp
 
 from . import audit
 from .config import Settings
-from .core import _fmt_bytes, _fmt_usd
+from .core import _error, _fmt_bytes, _fmt_usd
 from .engines import Engine, dialect_for
 from .identity import Identity, current
 from .sqlsafety import Statement, classify
@@ -310,9 +310,10 @@ def caller_status(settings: Settings) -> dict[str, Any]:
 
 def spend(settings: Settings, by: str = "agent", days: int = 7) -> dict[str, Any]:
     if by not in SPEND_BY:
-        return {"status": "error", "error": f"by must be one of {', '.join(SPEND_BY)}",
-                "next_step": "Use --by agent, day or table."}
-    days = max(1, int(days))
+        return _error(f"by must be one of {', '.join(SPEND_BY)}", "Use --by agent, day or table.")
+    if days < 1:
+        return _error("--days must be at least 1.", "Give a positive number of days, for example --days 7.")
+    days = int(days)
     first = now_utc().date() - timedelta(days=days - 1)
     groups: dict[str, dict[str, Any]] = {}
     total = {"usd": 0.0, "executions": 0, "bytes": 0}

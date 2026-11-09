@@ -552,6 +552,25 @@ def test_cli_top_output_file(demo_db, state, workload_csv, tmp_path, capsys):
     assert "ranked by cost" in expected and "next:" in expected
 
 
+def test_top_refuses_limit_below_one_and_negative_analyze(settings, demo_db, workload_csv, capsys):
+    for limit in (0, -3):
+        res = workload.top(settings, source=f"csv:{workload_csv}", limit=limit)
+        assert res["status"] == "error" and "--limit" in res["error"] and res["next_step"]
+        assert main(["--dsn", demo_db, "top", "--source", f"csv:{workload_csv}", "--limit", str(limit),
+                     "--json"]) == 1
+        assert json.loads(capsys.readouterr().out)["status"] == "error"
+    for analyze in (-1, -10):
+        res = workload.top(settings, source=f"csv:{workload_csv}", analyze=analyze)
+        assert res["status"] == "error" and "--analyze" in res["error"] and res["next_step"]
+        assert main(["--dsn", demo_db, "top", "--source", f"csv:{workload_csv}", "--analyze", str(analyze)]) == 1
+        assert "--analyze" in capsys.readouterr().out
+    # --analyze 0 stays valid: list the groups, analyse none of them
+    zero = workload.top(settings, source=f"csv:{workload_csv}", analyze=0)
+    assert zero["status"] in ("ok", "warn") and zero["top"] and all("analysis" not in t for t in zero["top"])
+    assert main(["--dsn", demo_db, "top", "--source", f"csv:{workload_csv}", "--analyze", "0", "--json"]) == 0
+    assert workload.top(settings, source=f"csv:{workload_csv}", limit=1)["top"][0]["rank"] == 1
+
+
 def test_mcp_top_tool(demo_db, state, workload_csv, monkeypatch):
     import asyncio
 

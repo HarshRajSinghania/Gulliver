@@ -90,6 +90,8 @@ The JSON has the same data per group: `fingerprint`, `calls`, `calls_per_day`, `
 
 ## Limits
 
+- `--limit` must be at least 1 and `--analyze` at least 0; anything lower returns `status: error` with a
+  `next_step` and exits 1. `--analyze 0` still ranks the groups and analyses none of them.
 - Per-month numbers assume the next 30 days repeat the window that was read. `exact` describes the estimates, not
   the future workload. A window shorter than one day (right after a `pg_stat_statements` reset) gets no per-month
   numbers and no summary-table candidates; a note says how many hours were read.

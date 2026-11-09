@@ -538,7 +538,7 @@ def _main(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             from .calibration import calibration, render_calibration
 
             result = calibration(settings, days=args.days, connection=conn)
-            if args.json:
+            if args.json or result["status"] != "ok":
                 return _emit(result, args.json)
             print(render_calibration(result))
             return 0
