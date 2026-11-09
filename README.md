@@ -767,7 +767,7 @@ The read-only gate uses its own codes. A `GS` finding is always a `block` with t
 
 ```
 gulliver status                       connections, budget, spend today (and your own, under caller)
-gulliver inspect [TABLE] [--sensitive] [--scan N]   biggest tables, one table's columns, or sensitive columns
+gulliver inspect [TABLE] [--limit 25] [--sensitive] [--scan N]   limit: 1-200 (ignored with TABLE); scan: 0-1000, 0 disables scanning
 gulliver lint SQL [--dialect D]       scale lint of one query
 gulliver lint PATH... [--format text|json|sarif|github|gitlab|junit] [--fail-on error|warn|info|never]
                       [--exclude GLOB] [--warn-unused-ignores] [--metadata] [-o PATH]   files and folders (CI)

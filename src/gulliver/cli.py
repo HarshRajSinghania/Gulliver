@@ -194,11 +194,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("inspect", help="Biggest tables, or one table's columns")
     p.add_argument("table", nargs="?")
-    p.add_argument("--limit", type=int, default=25)
+    p.add_argument("--limit", type=int, default=25, help="Tables to list (1-200); ignored with a table name")
     p.add_argument("--sensitive", action="store_true",
                    help="List columns that look like personal data or secrets (by name and earlier values)")
     p.add_argument("--scan", type=int, default=0, metavar="ROWS",
-                   help="With --sensitive: also check this many rows of text values (one budget-gated query)")
+                   help="With --sensitive: check 0-1000 rows of text values (0 disables the budget-gated scan)")
 
     p = sub.add_parser("lint", help="Scale lint only (no database needed): one SQL string, or files and folders")
     p.add_argument("sql", nargs="*", help="SQL text, '-' to read stdin, or .sql files and folders (CI mode)")
