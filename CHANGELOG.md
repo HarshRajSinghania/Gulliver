@@ -14,6 +14,7 @@
 - `gulliver calibration [--days N] [-c NAME]` and the `gulliver://calibration` MCP resource show how often rehearsal ranges held up against real runs, per metric and confidence level. New run receipts store `low`, `high` and `confidence` in `predicted_vs_actual` (#47).
 - `gulliver receipt --list [--limit N] [--status STATUS] [--json]` lists recent receipts newest first, with summary fields only (no preview rows), so you can find a receipt without knowing its id (#39, #60).
 - `gulliver diff` says which columns differ for changed keys ("Rows differ in: country (1 key)"), computed inside the existing keys query, so no extra queries run and no values leave the engine (#46, #69).
+- `gulliver prune [--older-than 30d] [--keep-last N] [--dry-run]` cleans up old receipts and expired approvals while `gulliver audit verify` keeps passing (#79).
 - `gulliver lint --baseline FILE` / `--write-baseline [FILE]` and `[lint] baseline`: record today's findings and report (and fail on) only new ones on an existing repo. Findings match by path, rule and source line, so moved lines still match and copies or edits are new. The JSON result gets `baselined` and `baseline_fixed` (#45).
 
 ### Thanks
@@ -23,7 +24,9 @@
 - @ariktadas144 for the non-English prompt-injection signal (#62).
 - @Doomguy-BFG9000 for escaping `|` and `~` in composite keys and diffs (#53).
 - @17302513901yh-lang for refusing unknown lint rule ids (#54) and lint rule GV018 (#66), and @ariktadas144 for the careful review of it.
-- @Muhtasim-Munif-Fahim for `gulliver rules --format markdown|json` and the generated README rule table (#68).
+- @Muhtasim-Munif-Fahim for `gulliver rules --format markdown|json` and the generated README rule table (#68), and `spend -o` / `top -o` (#67).
+- @ariktadas144 for `gulliver lint --baseline`, so existing repos only see new findings (#90).
+- @shaw778 for `gulliver prune`, which cleans up receipts without breaking the audit chain (#88).
 - @Abhishekpandey123-git for `gulliver receipt --list` (#60).
 - @HarshRajSinghania for the read-only Postgres role docs (#8), which shaped the section that shipped in 0.3.0.
 - @YinL-k for lint rule GV016 (#23).
