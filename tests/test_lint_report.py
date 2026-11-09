@@ -531,3 +531,107 @@ def test_fix_without_a_connection_says_tables_were_not_checked(state, tmp_path, 
     assert main(["fix", "--check", "a.sql", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
     assert data["status"] == "warn" and any("events" in n for n in data["notes"])
+
+
+# -- baseline ----------------------------------------------------------------------------------------------
+BAD = "select * from t limit 5\n"        # one finding: GV001
+
+
+def _baseline_project(tmp_path):
+    _write(tmp_path / "models" / "a.sql", BAD)
+    _write(tmp_path / "models" / "sub" / "b.sql", "-- b\n" + BAD)
+    return tmp_path / "gulliver-baseline.json"
+
+
+def test_write_baseline_is_stable_json_without_sql_text(state, tmp_path, capsys):
+    base = _baseline_project(tmp_path)
+    assert main(["lint", "models", "--write-baseline", str(base)]) == 0
+    first = base.read_text(encoding="utf-8")
+    assert main(["lint", "models", "--write-baseline", str(base)]) == 0
+    assert base.read_text(encoding="utf-8") == first
+    doc = json.loads(first)
+    assert doc["version"] == 1
+    assert [(e["path"], e["rule"], e["count"]) for e in doc["entries"]] == [
+        ("models/a.sql", "GV001", 1), ("models/sub/b.sql", "GV001", 1)]
+    assert "limit" not in first and "select" not in first
+
+
+def test_baseline_hides_old_findings_and_keeps_the_exit_code_clean(state, tmp_path, capsys):
+    base = _baseline_project(tmp_path)
+    main(["lint", "models", "--write-baseline", str(base)])
+    capsys.readouterr()
+    assert main(["lint", "models", "--fail-on", "warn"]) == 2                      # without the baseline: fails
+    assert main(["lint", "models", "--fail-on", "warn", "--baseline", str(base)]) == 0
+    out = lint_paths(["models"], baseline=str(base), fail_on="warn")
+    assert out["status"] == "ok" and out["failing"] == 0 and out["findings"] == []
+    assert out["baselined"] == 2 and out["baseline_fixed"] == 0 and out["ignored"] == 0
+    assert {f["ignored_by"] for f in out["ignored_findings"]} == {"baseline"}
+    for fmt in ("sarif", "gitlab", "github", "junit"):                              # left out of every format
+        text = render(out, fmt)
+        assert "GV001" not in text or fmt == "sarif"                                # sarif lists the rule metadata
+    assert json.loads(render(out, "sarif"))["runs"][0]["results"] == []
+    assert json.loads(render(out, "gitlab")) == []
+
+
+def test_baseline_survives_moved_lines_but_not_copies_or_edits(state, tmp_path):
+    base = _baseline_project(tmp_path)
+    main(["lint", "models", "--write-baseline", str(base)])
+    a = tmp_path / "models" / "a.sql"
+    a.write_text("-- a new header\n-- and another\n" + BAD, encoding="utf-8")        # the line moved down
+    assert lint_paths(["models"], baseline=str(base))["findings"] == []
+    a.write_text(BAD + ";\n" + BAD, encoding="utf-8")                               # a second copy is new
+    out = lint_paths(["models"], baseline=str(base))
+    assert len(out["findings"]) == 1 and out["findings"][0]["path"] == "models/a.sql" and out["baselined"] == 2
+    a.write_text("select *, y from t limit 5\n", encoding="utf-8")          # an edited line is new
+    out = lint_paths(["models"], baseline=str(base))
+    assert len(out["findings"]) == 1 and out["baseline_fixed"] == 1
+
+
+def test_baseline_fixed_counts_only_linted_files(state, tmp_path, capsys):
+    base = _baseline_project(tmp_path)
+    main(["lint", "models", "--write-baseline", str(base)])
+    (tmp_path / "models" / "a.sql").write_text("select x from t limit 5\n", encoding="utf-8")
+    only_a = lint_paths(["models/a.sql"], baseline=str(base))
+    assert only_a["baselined"] == 0 and only_a["baseline_fixed"] == 1               # b.sql was not linted
+    everything = lint_paths(["models"], baseline=str(base))
+    assert everything["baselined"] == 1 and everything["baseline_fixed"] == 1
+    capsys.readouterr()
+    assert main(["lint", "models", "--baseline", str(base)]) == 0
+    assert "1 in baseline, 1 fixed: run --write-baseline to shrink it" in capsys.readouterr().out
+
+
+def test_missing_or_invalid_baseline_is_an_error(state, tmp_path, capsys):
+    _baseline_project(tmp_path)
+    assert main(["lint", "models", "--baseline", "nope.json"]) == 1
+    assert "Baseline file not found" in capsys.readouterr().out
+    (tmp_path / "bad.json").write_text("{not json", encoding="utf-8")
+    assert main(["lint", "models", "--baseline", "bad.json"]) == 1
+    assert "not valid JSON" in capsys.readouterr().out
+    (tmp_path / "other.json").write_text('{"hello": 1}', encoding="utf-8")
+    assert main(["lint", "models", "--baseline", "other.json"]) == 1
+    assert "not a Gulliver baseline" in capsys.readouterr().out
+
+
+def test_baseline_from_toml_is_relative_to_the_toml_and_works_from_a_subfolder(state, tmp_path, monkeypatch, capsys):
+    _write(tmp_path / "gulliver.toml", '[lint]\nbaseline = "gulliver-baseline.json"\n')
+    _baseline_project(tmp_path)
+    assert main(["lint", "models", "--write-baseline"]) == 0                        # path from [lint] baseline
+    assert (tmp_path / "gulliver-baseline.json").exists()
+    capsys.readouterr()
+    monkeypatch.chdir(tmp_path / "models")                                         # a different working folder
+    assert main(["lint", ".", "--fail-on", "warn", "--config", str(tmp_path / "gulliver.toml")]) == 0
+    assert "2 in baseline" in capsys.readouterr().out
+    assert main(["lint", "sub/b.sql", "--baseline", "../gulliver-baseline.json", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["baselined"] == 1 and data["baseline_fixed"] == 0 and data["findings"] == []
+
+
+def test_write_baseline_without_any_path_is_refused(state, tmp_path, capsys):
+    _baseline_project(tmp_path)
+    assert main(["lint", "models", "--write-baseline"]) == 1
+    assert "--write-baseline needs a path" in capsys.readouterr().out
+
+
+def test_lint_baseline_key_must_be_a_path():
+    with pytest.raises(ConfigError):
+        lint_config_from_mapping({"baseline": 3})

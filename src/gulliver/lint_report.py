@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from typing import Any
@@ -20,7 +19,7 @@ from xml.sax.saxutils import quoteattr as _quoteattr
 
 from . import __version__
 from .lint import RULES
-from .lint_files import META_RULES, FileFinding, FileResult, fails, rule_name
+from .lint_files import META_RULES, FileResult, fails, fingerprint, rule_name
 
 FORMATS = ("text", "json", "sarif", "github", "gitlab", "junit")
 HELP_URI = "https://github.com/laaielichter/Gulliver#scale-lint-rules"
@@ -168,6 +167,11 @@ def to_text(result: dict[str, Any]) -> str:
     extra = []
     if result.get("ignored"):
         extra.append(f"{result['ignored']} ignored")
+    if "baselined" in result:
+        base = f"{result['baselined']} in baseline"
+        if result.get("baseline_fixed"):
+            base += f", {result['baseline_fixed']} fixed: run --write-baseline to shrink it"
+        extra.append(base)
     if result.get("skipped_statements"):
         extra.append(f"{result['skipped_statements']} statement(s) not a read, skipped")
     if extra:
@@ -210,14 +214,6 @@ def _uri(path: str) -> str:
     return p.as_uri() if p.is_absolute() else quote(path)
 
 
-def _fingerprint(f: FileFinding, seen: dict[str, int]) -> str:
-    """Stable across line moves: path + rule + the source line text (+ a counter for repeats)."""
-    base = hashlib.sha1(f"{f.path}\0{f.rule}\0{' '.join(f.snippet.split())}".encode(), usedforsecurity=False).hexdigest()
-    seen[base] = seen.get(base, 0) + 1
-    return base if seen[base] == 1 else hashlib.sha1(f"{base}:{seen[base]}".encode(),
-                                                     usedforsecurity=False).hexdigest()
-
-
 def to_sarif(result: dict[str, Any]) -> str:
     results = _results(result)
     used = list(dict.fromkeys([*RULES, *META_RULES, *(f.rule for r in results for f in r.findings)]))
@@ -245,7 +241,7 @@ def to_sarif(result: dict[str, Any]) -> str:
                 "message": {"text": f"{f.message} Fix: {f.fix}" if f.fix else f.message},
                 "locations": [{"physicalLocation": {"artifactLocation": {"uri": _uri(f.path)},
                                                     "region": _region(f.line, f.col, f.end_line, f.end_col)}}],
-                "partialFingerprints": {"gulliver/v1": _fingerprint(f, seen)},
+                "partialFingerprints": {"gulliver/v1": fingerprint(f, seen)},
             }
             if f.rule == "GV005" and f.statement in fixes_by_statement and f.statement not in attached:
                 item["fixes"] = fixes_by_statement[f.statement]
@@ -299,7 +295,7 @@ def to_gitlab(result: dict[str, Any]) -> str:
             "content": {"body": f"Fix: {f.fix}"} if f.fix else {"body": ""},
             "categories": ["Performance"],
             "severity": GITLAB_SEVERITY.get(f.severity, "minor"),
-            "fingerprint": _fingerprint(f, seen),
+            "fingerprint": fingerprint(f, seen),
             "location": {"path": f.path, "lines": {"begin": f.line, "end": max(f.line, f.end_line)}},
         })
     return json.dumps(issues, indent=2)
@@ -445,11 +441,16 @@ def cli_lint(args: Any) -> int:
 
     fmt = "json" if args.json and args.format in (None, "text") else (args.format or "text")
     config = load_lint_config(args.config)
+    write_to = args.write_baseline
+    if write_to is True:   # --write-baseline with no path: use [lint] baseline
+        write_to = config.baseline
+        if not write_to:
+            raise ValueError("--write-baseline needs a path, or `baseline = \"...\"` under [lint] in gulliver.toml")
     with ExitStack() as stack:
         dialect, metadata = _dialect_and_metadata(args, config, stack, bool(args.metadata))
         result = lint_paths(args.sql, dialect=dialect, config=config, fail_on=args.fail_on,
                             exclude=args.exclude or (), warn_unused_ignores=True if args.warn_unused_ignores else None,
-                            metadata=metadata)
+                            metadata=metadata, baseline=args.baseline, write_baseline_to=write_to)
     text = render(result, fmt)
     _write_or_print(text, args.output)
     if args.output and fmt != "text":
