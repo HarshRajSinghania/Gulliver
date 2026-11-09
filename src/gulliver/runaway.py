@@ -418,21 +418,58 @@ def audit_verify(settings: Settings, head: str | None = None) -> dict[str, Any]:
     trail_path = store.root / "audit.jsonl"
     trail = audit.verify_chain(trail_path)
     problems = ledger["problems"] + trail["problems"]
-    latest: dict[tuple[str, str], str] = {}
+    audited: dict[tuple[str, str], dict[str, Any]] = {}
     if trail_path.is_file():
         for line in trail_path.read_text(encoding="utf-8").splitlines():
             try:
                 entry = json.loads(line)
-                latest[(entry["kind"], entry["id"])] = entry["sha256"]
+                kind = entry.get("kind")
+                item_id = entry.get("id")
+                sha = entry.get("sha256")
+                if not kind or not item_id or not sha:
+                    continue
+                if kind == "prune":
+                    target = entry.get("target")
+                    if not target:
+                        if ("receipt", item_id) in audited:
+                            target = "receipt"
+                        elif ("approval", item_id) in audited:
+                            target = "approval"
+                        else:
+                            target = "receipt"
+                    key = (target, item_id)
+                    if key in audited:
+                        audited[key]["last_action"] = "prune"
+                        audited[key]["prune_sha"] = sha
+                    else:
+                        audited[key] = {"sha256": sha, "last_action": "prune", "prune_sha": sha}
+                else:
+                    if (kind, item_id) in audited:
+                        audited[(kind, item_id)]["sha256"] = sha
+                        audited[(kind, item_id)]["last_action"] = kind
+                    else:
+                        audited[(kind, item_id)] = {"sha256": sha, "last_action": kind}
             except (ValueError, KeyError, TypeError):
                 continue
     folders = {"receipt": store.receipts_dir, "approval": store.approvals_dir}
     checked = 0
-    for (kind, item_id), sha in latest.items():
+    pruned_count = 0
+    for (kind, item_id), item in audited.items():
         path = folders.get(kind, store.root) / f"{item_id}.json"
         if not path.is_file():
-            problems.append(f"{kind} {item_id} was deleted")
-        elif audit.content_hash(path.read_bytes()) != sha:
+            if item.get("last_action") == "prune":
+                if item.get("prune_sha") == item.get("sha256"):
+                    pruned_count += 1
+                else:
+                    problems.append(f"{kind} {item_id} was changed before it was pruned")
+            else:
+                problems.append(f"{kind} {item_id} was deleted")
+        elif item.get("last_action") == "prune":
+            if audit.content_hash(path.read_bytes()) != item["sha256"]:
+                problems.append(f"{kind} {item_id} was changed after Gulliver wrote it")
+            else:
+                checked += 1
+        elif audit.content_hash(path.read_bytes()) != item["sha256"]:
             problems.append(f"{kind} {item_id} was changed after Gulliver wrote it")
         else:
             checked += 1
@@ -442,7 +479,7 @@ def audit_verify(settings: Settings, head: str | None = None) -> dict[str, Any]:
         if not folder.is_dir():
             continue
         for p in sorted(folder.glob("*.json")):
-            if (kind, p.stem) in latest:
+            if (kind, p.stem) in audited:
                 continue
             born = _born(kind, p)
             if start is not None and (born is None or born >= start):
@@ -469,6 +506,8 @@ def audit_verify(settings: Settings, head: str | None = None) -> dict[str, Any]:
     notes = [] if audit._key() else [
         "No GULLIVER_AUDIT_KEY: anyone who can write .gulliver can rebuild the chain. Keep the heads somewhere "
         "else, or set a key the agent cannot read."]
+    if pruned_count:
+        notes.append(f"{pruned_count} file(s) were pruned")
     status = "fail" if problems else ("warn" if warnings else "ok")
     if problems:
         next_step = "Something in .gulliver changed after Gulliver wrote it: tell the human which entries."
@@ -490,3 +529,28 @@ def audit_verify(settings: Settings, head: str | None = None) -> dict[str, Any]:
         "checked_at": iso(now_utc()),
         "next_step": next_step,
     }
+
+
+def prune(settings: Settings, older_than: str | timedelta = "30d",
+          keep_last: int | None = None, dry_run: bool = False) -> dict[str, Any]:
+    from .incremental import parse_period
+
+    delta = parse_period(older_than) if isinstance(older_than, str) else older_than
+    store = Store(settings.state_dir)
+    return store.prune(older_than=delta, keep_last=keep_last, dry_run=dry_run)
+
+
+def render_prune(result: dict[str, Any]) -> str:
+    from .core import _fmt_bytes
+
+    lines = []
+    prefix = "[dry-run] " if result.get("dry_run") else ""
+    lines.append(f"{prefix}Pruned {result['pruned_receipts']} receipt(s) and {result['pruned_approvals']} expired approval(s).")
+    lines.append(f"Freed: {_fmt_bytes(result['bytes_freed'])}")
+    if result.get("oldest_kept"):
+        lines.append(f"Oldest kept receipt: {result['oldest_kept']}")
+    else:
+        lines.append("No receipts kept.")
+    if result.get("next_step"):
+        lines.append(f"\nnext: {result['next_step']}")
+    return "\n".join(lines)

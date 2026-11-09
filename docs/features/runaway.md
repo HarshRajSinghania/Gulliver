@@ -142,6 +142,39 @@ a hash that is newer than the chain, are also a `fail`. An approval file without
 ignored by `gulliver_run`, so a hand-written approval approves nothing. Lines and files from before the chain
 existed are counted and reported as a warning; verify only says "Intact" when there are no warnings.
 
+### Pruning old receipts (`gulliver prune`)
+
+Every preflight, rehearsal, run, check and diff writes a JSON receipt to `.gulliver/receipts/`. Over time,
+this folder grows. Deleting receipts by hand causes `gulliver audit verify` to fail because the missing files
+are detected by the audit chain.
+
+`gulliver prune` safely cleans up old receipts and expired approvals while preserving the integrity of the
+audit trail:
+
+```console
+$ gulliver prune --older-than 30d --dry-run
+[dry-run] Pruned 42 receipt(s) and 3 expired approval(s).
+Freed: 1.2 MB
+Oldest kept receipt: 2026-10-09T14:22:00+00:00
+
+next: Dry run: re-run without --dry-run to remove these files and append audit prune entries.
+
+$ gulliver prune --older-than 30d --keep-last 50
+Pruned 42 receipt(s) and 3 expired approval(s).
+Freed: 1.2 MB
+Oldest kept receipt: 2026-10-09T14:22:00+00:00
+
+next: Pruned. Check the audit trail with gulliver audit verify.
+```
+
+- **Receipt protection:** Receipts required by an active approval (`expires_at > now`) or an active rehearsal
+  (within `REHEARSAL_TTL`, 24 hours) are never pruned.
+- **`--keep-last N`:** Guarantees that at least the N most recent receipts are retained regardless of age.
+- **Audit preservation:** For each removed file, `Store._audit` appends a chained entry
+  `{"kind": "prune", "id": ..., "sha256": <content_hash>, "reason": ...}` to `audit.jsonl`.
+  `gulliver audit verify` recognizes legitimate prune entries, reports the count in its notes, and stays `ok`.
+- **Ledger:** `ledger.jsonl` is preserved (spend history and daily budget accounting read it).
+
 ## Guarantees and limits
 
 - The agent name and session are self-reported by the client. Per-agent and per-session budgets are

@@ -798,6 +798,7 @@ gulliver review [--models DIR] [--base REF] [--head REF] | [--manifest-base FILE
 gulliver selftest security [--corpus FILE]   the bypass test set and the DuckDB sandbox
 gulliver spend [--by agent|day|table|session|task|connection|kind] [--days 7] [--format markdown|csv] [-o PATH]
 gulliver audit verify [--head HASH]   check the hash chain over ledger, receipts and approvals
+gulliver prune [--older-than 30d] [--keep-last N] [--dry-run]   clean up old receipts and expired approvals
 gulliver tools --format mcp|openai|gemini [--toolset core|pipeline|all|NAMES]
 gulliver mcp [--http] [--toolset core|pipeline|all|NAMES]   start the MCP server
 ```

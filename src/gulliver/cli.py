@@ -349,6 +349,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=["verify"])
     p.add_argument("--head", help="A head hash printed by an earlier verify: prove nothing up to it changed")
 
+    p = sub.add_parser("prune", help="Clean up old receipts and expired approvals without breaking audit verify")
+    p.add_argument("--older-than", default="30d", help="Remove receipts older than this (e.g. 30d, 7d, 24h; default 30d)")
+    p.add_argument("--keep-last", type=int, default=None, help="Always keep at least this many newest receipts")
+    p.add_argument("--dry-run", action="store_true", help="List what would be removed without deleting anything")
+
     p = sub.add_parser("top", help="Most expensive repeated queries, with priced same-rows fixes")
     p.add_argument("--source", default="auto",
                    help="auto, receipts, pg_stat_statements, bigquery_jobs, snowflake_history, csv:FILE or jsonl:FILE")
@@ -537,11 +542,23 @@ def _main(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 return _emit(result, args.json)
             print(render_calibration(result))
             return 0
-        if args.command in ("spend", "audit"):
+        if args.command in ("spend", "audit", "prune"):
             from . import runaway
 
             if args.command == "audit":
                 return _emit(runaway.audit_verify(settings, head=args.head), args.json)
+            if args.command == "prune":
+                try:
+                    from .incremental import parse_period
+                    older_than_td = parse_period(args.older_than)
+                except ValueError as exc:
+                    parser.error(f"--older-than: {exc}")
+                result = runaway.prune(settings, older_than=older_than_td,
+                                       keep_last=args.keep_last, dry_run=args.dry_run)
+                if args.json or result.get("status") != "ok":
+                    return _emit(result, args.json)
+                print(runaway.render_prune(result))
+                return 0
             result = runaway.spend(settings, by=args.by, days=args.days)
             if args.json or result["status"] != "ok":
                 return _emit(result, args.json)
