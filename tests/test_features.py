@@ -147,7 +147,10 @@ def test_diff_distinguishes_embedded_separators_in_values(composite_values):
     result = features.diff(settings, "left_items", "right_items", ["id"])
     assert result["status"] == "warn", result
     assert result["identical"] is False
-    assert result["differences"]["changed"] == {"count": 1, "sample": ["1"]}
+    assert result["differences"]["changed"]["count"] == 1
+    assert result["differences"]["changed"]["sample"] == ["1"]
+    assert "columns" in result["differences"]["changed"]
+    assert "sample_columns" in result["differences"]["changed"]
     assert result["details_complete"] is True
 
 
@@ -177,7 +180,64 @@ def test_diff_finds_missing_extra_changed(settings):
     assert d["only_in_left"]["sample"] == ["5"]
     assert d["only_in_right"]["sample"] == ["999999"]
     assert d["changed"]["sample"] == ["7"]
+    assert d["changed"]["columns"] == {"country": 1}
+    assert d["changed"]["sample_columns"] == {"7": ["country"]}
+    assert "Rows differ in: country (1 key)" in r["next_step"]
     assert r["details_complete"] is True
+
+
+def test_diff_two_columns_changed_on_different_keys(settings):
+    right = ("select user_id, case when user_id = 7 then 'XX' else country end as country, "
+             "case when user_id = 8 then date '1999-01-01' else signup_date end as signup_date "
+             "from users")
+    r = features.diff(settings, "users", right, ["user_id"])
+    d = r["differences"]
+    assert d["changed"]["columns"] == {"country": 1, "signup_date": 1}
+    assert d["changed"]["sample_columns"] == {"7": ["country"], "8": ["signup_date"]}
+    assert "Rows differ in: country (1 key), signup_date (1 key)" in r["next_step"]
+
+
+def test_diff_null_to_value(tmp_path):
+    db = tmp_path / "nulls.duckdb"
+    with duckdb.connect(str(db)) as con:
+        con.execute("CREATE TABLE t1 (id INT, val VARCHAR)")
+        con.execute("CREATE TABLE t2 (id INT, val VARCHAR)")
+        con.execute("INSERT INTO t1 VALUES (1, NULL)")
+        con.execute("INSERT INTO t2 VALUES (1, 'hello')")
+    s = load_settings(dsn=str(db))
+    r = features.diff(s, "t1", "t2", ["id"])
+    assert r["differences"]["changed"]["columns"] == {"val": 1}
+    assert r["differences"]["changed"]["sample_columns"] == {"1": ["val"]}
+
+
+def test_diff_columns_filter(settings):
+    right = "select user_id, country, date '1999-01-01' as signup_date from users"
+    r = features.diff(settings, "users", right, ["user_id"], columns=["user_id", "country"])
+    assert r["identical"] is True
+
+    right_diff = ("select user_id, case when user_id = 7 then 'XX' else country end as country, "
+                  "date '1999-01-01' as signup_date from users")
+    r_diff = features.diff(settings, "users", right_diff, ["user_id"], columns=["user_id", "country"])
+    assert r_diff["identical"] is False
+    assert r_diff["differences"]["changed"]["columns"] == {"country": 1}
+    assert r_diff["differences"]["changed"]["sample_columns"] == {"7": ["country"]}
+    assert "signup_date" not in r_diff["columns_compared"]
+
+
+def test_diff_duplicate_keys_omitted_from_column_counts(tmp_path):
+    db = tmp_path / "dup.duckdb"
+    with duckdb.connect(str(db)) as con:
+        con.execute("CREATE TABLE t1 (id INT, val VARCHAR)")
+        con.execute("CREATE TABLE t2 (id INT, val VARCHAR)")
+        con.execute("INSERT INTO t1 VALUES (1, 'A'), (1, 'B')")
+        con.execute("INSERT INTO t2 VALUES (1, 'C')")
+    s = load_settings(dsn=str(db))
+    r = features.diff(s, "t1", "t2", ["id"])
+    d = r["differences"]
+    assert d["duplicate_keys"]["count"] == 1
+    assert d["changed"]["count"] == 1
+    assert d["changed"]["columns"] == {}
+    assert "omitted from column counts" in d["changed"]["note"]
 
 
 def test_diff_zooms_in_on_big_buckets(settings):
@@ -185,6 +245,13 @@ def test_diff_zooms_in_on_big_buckets(settings):
     r = features.diff(settings, "select event_id, user_id, amount from events", right, ["event_id"], buckets=4)
     assert r["differences"]["only_in_left"]["sample"] == ["123"]
     assert r["differences"]["only_in_right"]["count"] == 0
+
+
+def test_diff_zooms_in_differing_columns(settings):
+    right = "select event_id, user_id, case when event_id = 123 then amount + 10.0 else amount end as amount from events"
+    r = features.diff(settings, "select event_id, user_id, amount from events", right, ["event_id"], buckets=4)
+    assert r["differences"]["changed"]["columns"] == {"amount": 1}
+    assert r["differences"]["changed"]["sample_columns"] == {"123": ["amount"]}
 
 
 def test_diff_bad_key(settings):
@@ -259,12 +326,49 @@ def test_checks_pass_and_fail(settings):
     assert failed == {"unique", "accepted_values", "freshness"}
 
 
+def test_check_reports_a_bad_range_before_querying(settings):
+    r = features.check(settings, "events", ranges=["amount=100:1"])
+    assert r["status"] == "error"
+    assert "min 100 > max 1" in r["error"]
+
+
 def test_check_row_count_change(settings):
     features.check(settings, "users")
     r = features.check(settings, "select * from users where user_id < 10000", max_change_pct=10)
     assert r["status"] == "ok"  # different target, own history
     r2 = features.check(settings, "users", max_change_pct=10)
     assert r2["checks"][0]["previous_rows"] == 20_000
+
+
+def test_check_history_is_keyed_on_the_resolved_connection(settings):
+    features.check(settings, "users")
+    r = features.check(settings, "users", connection="default", max_change_pct=10)
+    assert r["checks"][0]["previous_rows"] == 20_000
+
+
+def test_different_connections_keep_separate_histories(settings):
+    from dataclasses import replace
+
+    from gulliver.config import Connection
+
+    features.check(settings, "users")
+    path = settings.connection().params["path"]
+    other = replace(
+        settings,
+        connections={**settings.connections, "second": Connection("second", "duckdb", {"path": path})},
+    )
+    r = features.check(other, "users", connection="second", max_change_pct=10)
+    assert "previous_rows" not in r["checks"][0]
+
+
+def test_a_history_saved_under_the_old_none_key_is_still_read(settings):
+    from gulliver.sqlsafety import sql_fingerprint
+
+    features.check(settings, "users")
+    checks = settings.state_dir / "checks"
+    (checks / f"{sql_fingerprint('default|users|')}.json").rename(checks / f"{sql_fingerprint('None|users|')}.json")
+    r = features.check(settings, "users", max_change_pct=10)
+    assert r["checks"][0]["previous_rows"] == 20_000
 
 
 def test_check_cli_exit_code(demo_db, state):

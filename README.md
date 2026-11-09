@@ -1,10 +1,11 @@
 <!-- mcp-name: io.github.laaielichter/gulliver -->
 
 <p align="center">
-  <a href="https://laaielichter.github.io/Gulliver/"><img src="https://raw.githubusercontent.com/laaielichter/Gulliver/main/docs/og.png" alt="Gulliver: test on tiny data before you run on giant data. A rehearsal on 1%, 3% and 10% predicts the full run." width="760"></a>
+  <a href="https://laaielichter.github.io/Gulliver/"><img src="https://raw.githubusercontent.com/laaielichter/Gulliver/main/docs/assets/social.jpg" alt="Gulliver: test on tiny data before you run on giant data. A rehearsal on 1%, 3% and 10% predicts the full run." width="760"></a>
 </p>
 
 <h1 align="center">Gulliver</h1>
+<p align="center"><img src="docs/logo.svg" alt="Gulliver compass icon" width="56" height="56"></p>
 
 <p align="center"><b>Test on tiny data before you run on giant data.</b><br>
 An open-source MCP server and CLI that gives AI agents a dress rehearsal for SQL: estimate the cost, fix the slow parts, rehearse on 1% → 3% → 10% of the data, predict what 100% will do, and only run the full query inside a budget.</p>
@@ -328,6 +329,8 @@ agent_day_usd = 5           # per agent per day (optional)
 
 The example file also shows the settings for the read-only gate (`allowed_paths`, `allow_remote`,
 `allow_functions`), the result guard (`policy`), the runaway guard, `[lint]`, `[review]` and `[approval]`.
+An unknown top-level key or section is refused, so a typo such as `[budjet]` cannot silently fall back to the
+default budget.
 
 ### A read-only Postgres role
 
@@ -467,7 +470,7 @@ gulliver diff --left orders --right orders --key id -c postgres_prod --right-con
 
 Each side is reduced inside its engine to 256 buckets of (row count, sum of MD5 row hashes) keyed by the key's
 hash, so it scales to billions of rows and costs about one scan per side. Only buckets that differ are opened
-(with a finer second pass when they are big) to list keys that are missing, extra or changed. MD5 is the same on
+(with a finer second pass when they are big) to list keys that are missing, extra or changed and which columns differ. MD5 is the same on
 every engine, so you can diff across engines; values are compared as text, so cast or round in your queries where
 engines format numbers or timestamps differently. Use it after a refactor, a migration or an incremental switch.
 
@@ -668,7 +671,7 @@ gulliver lint models/ --format sarif -o gulliver.sarif  # GitHub Code Scanning; 
 gulliver lint models/ --fail-on warn                    # exit 2 on warnings too (default: errors)
 gulliver fix --check models/ -c warehouse               # exit 2 when a same-rows rewrite exists
 gulliver fix --write models/ -c warehouse               # apply only same-rows rewrites, in place
-gulliver rules                                          # every rule with its severity and autofix
+gulliver rules [--format text|markdown|json]            # every rule with its severity and autofix
 ```
 
 Accept a pattern on purpose with `-- gulliver: ignore GV001 reason` (or `ignore-file`); a typo in the rule list
@@ -738,11 +741,12 @@ The action posts one PR comment and updates it on every push, writes the job sum
 | GV010 | scalar-subquery-in-select | info |
 | GV011 | window-without-partition | warn |
 | GV012 | not-in-subquery | info |
-| GV013 | leading-wildcard-like | info |
+| GV013 | leading-wildcard-like (`%` or `_`) | info |
 | GV014 | sensitive-column-in-output | info (personal data, masked secret) / warn (unmasked secret) |
 | GV015 | fan-trap | warn |
 | GV016 | order-by-random | warn |
 | GV017 | deep-offset | warn |
+| GV018 | count-for-existence | info |
 | GV900 | parse-error (file lint only) | warn |
 | GV901 | unused-ignore (an unreadable or unused `gulliver: ignore`) | warn |
 
@@ -767,7 +771,7 @@ gulliver inspect [TABLE] [--sensitive] [--scan N]   biggest tables, one table's 
 gulliver lint SQL [--dialect D]       scale lint of one query
 gulliver lint PATH... [--format text|json|sarif|github|gitlab|junit] [--fail-on error|warn|info|never]
                       [--exclude GLOB] [--warn-unused-ignores] [--metadata] [-o PATH]   files and folders (CI)
-gulliver rules                        every lint rule: id, name, severity, autofix
+gulliver rules [--format text|markdown|json]   every lint rule: id, name, severity, autofix
 gulliver fix SQL [--dialect D] [--mode safe|all] [--limit N] [-o PATH]   rewrite SQL, say what changes
 gulliver fix SQL --verify [--cases 200] [--seed 0] [--timezone TZ]      test every rewrite on generated data
 gulliver fix --check | --write PATH...                                  same-rows rewrites in files (CI)
@@ -775,6 +779,7 @@ gulliver preflight SQL                estimate + lint + gate, no execution
 gulliver rehearse SQL [--fractions 0.01,0.03,0.1] [--sample largest|all] [--method auto|system|bernoulli]
 gulliver run SQL [--max-rows N] [--allow-write]
 gulliver receipt [ID|latest] [--format markdown|json] [-o PATH]
+gulliver receipt --list [--limit N] [--status STATUS] [--json]
 gulliver approve ID [--note TEXT]     (human only)
 gulliver demo [PATH]                  create a demo DuckDB database
 gulliver lineage --models DIR | --manifest FILE

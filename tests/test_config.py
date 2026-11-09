@@ -45,6 +45,37 @@ def test_unknown_budget_key(tmp_path, monkeypatch):
         load_settings()
 
 
+def test_unknown_top_level_section_is_refused(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "gulliver.toml").write_text("[budjet]\nmax_query_usd = 0.0001\n")
+    with pytest.raises(ConfigError, match=r"Unknown section\(s\) in gulliver.toml: budjet\. Known: .*budget"):
+        load_settings()
+    # a typo without a table header is the same mistake
+    (tmp_path / "gulliver.toml").write_text("budjet = 0.0001\n")
+    with pytest.raises(ConfigError, match="budjet"):
+        load_settings()
+
+
+def test_every_known_section_loads(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "gulliver.toml").write_text(
+        'default_connection = "local"\n'
+        'state_dir = ".state"\n'
+        "[connections.local]\nengine = \"duckdb\"\npath = \":memory:\"\n"
+        "[budget]\nmax_query_usd = 2.5\n"
+        "[approval]\nchannel = \"cli\"\n"
+        "[lint]\nfail_on = \"error\"\n"
+        "[review]\nfail_on = \"cost\"\n"
+    )
+    s = load_settings()
+    assert s.default_connection == "local"
+    assert s.state_dir == Path(".state")
+    assert s.budget.max_query_usd == 2.5
+    assert s.approval_channel == "cli"
+
+
 def test_default_is_in_memory_duckdb(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("GULLIVER_DSN", raising=False)
@@ -91,6 +122,38 @@ def test_non_finite_budget_from_env(tmp_path, monkeypatch):
             load_settings()
         assert key in str(excinfo.value)
         monkeypatch.delenv(env_key)
+
+
+def test_whole_number_budget_rejects_fractions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for body in ("max_output_rows = 1.9\n", "max_repeats = 1.5\n", 'max_bytes = "20.5"\n'):
+        _write_budget(tmp_path, body)
+        with pytest.raises(ConfigError, match="whole number"):
+            load_settings()
+    # a float that is a whole number, such as 2e9, still loads
+    _write_budget(tmp_path, "max_output_rows = 2e0\nmax_bytes = 2e9\n")
+    s = load_settings()
+    assert s.budget.max_output_rows == 2
+    assert s.budget.max_bytes == 2_000_000_000
+
+
+def test_whole_number_budget_from_env(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GULLIVER_MAX_OUTPUT_ROWS", "20")
+    assert load_settings().budget.max_output_rows == 20
+    monkeypatch.setenv("GULLIVER_MAX_OUTPUT_ROWS", "1.9")
+    with pytest.raises(ConfigError, match="whole number"):
+        load_settings()
+
+
+def test_boolean_budget_values_are_refused(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    for body in ("max_query_usd = true\n", "max_output_rows = true\n",
+                 "agent_day_usd = true\n", "agent_day_usd = {default = true}\n"):
+        _write_budget(tmp_path, body)
+        with pytest.raises(ConfigError) as excinfo:
+            load_settings()
+        assert "boolean" in str(excinfo.value)
 
 
 def test_negative_budget_rejected_and_zero_allowed(tmp_path, monkeypatch):

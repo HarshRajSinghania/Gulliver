@@ -290,11 +290,30 @@ def diff(settings: Settings, left_sql: str, right_sql: str, key: list[str], conn
                     left, left_sql, key, compare_cols, modulus, chosen, row_budget + 1), "diff", preview_rows=row_budget + 1)
                 rk = _gated_run(settings, rconn.name, right, diffing.keys_sql(
                     right, right_sql, key, compare_cols, modulus, chosen, row_budget + 1), "diff", preview_rows=row_budget + 1)
-                details = diffing.compare_keys(lk["rows"], rk["rows"], max_keys)
+                details = diffing.compare_keys(lk["rows"], rk["rows"], max_keys, columns=compare_cols)
                 cost += (lk["cost_usd"] or 0) + (rk["cost_usd"] or 0)
+                notes = result.get("notes", [])
+                if not complete and details.get("changed", {}).get("count", 0) > 0:
+                    sample_note = "Column counts cover the sampled buckets only."
+                    if "note" in details["changed"]:
+                        details["changed"]["note"] += f" {sample_note}"
+                    else:
+                        details["changed"]["note"] = sample_note
+                if "note" in details.get("changed", {}) and details["changed"]["note"] not in notes:
+                    notes.append(details["changed"]["note"])
+                if notes:
+                    result["notes"] = notes
+
+                cols_diff = details.get("changed", {}).get("columns", {})
+                if cols_diff:
+                    col_parts = [f"{c} ({n} {'key' if n == 1 else 'keys'})" for c, n in list(cols_diff.items())[:5]]
+                    differ_prefix = f"Rows differ in: {', '.join(col_parts)}."
+                else:
+                    differ_prefix = "Rows differ."
+
                 result.update(status="warn", identical=False, differences=details, cost_usd=round(cost, 6),
                               details_complete=complete,
-                              next_step=("Rows differ. "
+                              next_step=(differ_prefix + " "
                                          + ("Counts above are complete." if complete else
                                             "Counts above cover a sample of the differing rows; left_rows and "
                                             "right_rows are the full totals.")
@@ -471,9 +490,21 @@ def check(settings: Settings, target: str, connection: str | None = None, where:
     source = target.strip().rstrip(";")
     if not all(ch.isalnum() or ch in "._`\"[]-" for ch in source):
         source = f"({_as_query(source)}) AS gv_src"
-    history_key = sql_fingerprint(f"{connection}|{source}|{where or ''}")
+    try:
+        conn_name = settings.connection(connection).name
+    except ConfigError as exc:
+        return _error(str(exc))
+    history_key = sql_fingerprint(f"{conn_name}|{source}|{where or ''}")
     history_path = store.root / "checks" / f"{history_key}.json"
-    previous = json.loads(history_path.read_text()) if history_path.is_file() else None
+    read_path = history_path
+    if connection is None and not history_path.is_file():
+        # A history written before the key used the resolved name spells the
+        # omitted connection as None; keep reading it and migrate on this run.
+        legacy_key = sql_fingerprint(f"None|{source}|{where or ''}")
+        legacy_path = store.root / "checks" / f"{legacy_key}.json"
+        if legacy_path.is_file():
+            read_path = legacy_path
+    previous = json.loads(read_path.read_text()) if read_path.is_file() else None
     result: dict[str, Any] = {"action": "check", "target": target, "where": where}
     try:
         with _engine(settings, connection) as (conn, engine):

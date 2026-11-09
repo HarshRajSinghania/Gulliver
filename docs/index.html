@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,15 +7,15 @@
 <meta name="description" content="Gulliver is an open-source MCP server and CLI that lets AI agents estimate the cost of SQL, rehearse it on 1%, 3% and 10% samples, predict the full run and only run it inside a budget, with a read-only gate and guards for personal data and loops. DuckDB, Postgres, BigQuery, Snowflake.">
 <meta property="og:title" content="Gulliver: a dress rehearsal for agent SQL">
 <meta property="og:description" content="Estimate the cost, rehearse on 1% of the data, predict 100%, and only run inside a budget. MCP server + CLI for Claude Code, Codex, Cursor, Gemini CLI and any agent.">
-<meta property="og:image" content="https://laaielichter.github.io/Gulliver/og.png">
+<meta property="og:image" content="https://laaielichter.github.io/Gulliver/assets/social.jpg">
 <meta property="og:url" content="https://laaielichter.github.io/Gulliver/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Gulliver">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="keywords" content="MCP server, AI agents, SQL, cost estimate, dry run, sampling, scale lint, query optimization, text-to-SQL, data engineering, data quality, data lineage, DuckDB, Postgres, BigQuery, Snowflake, dbt, SARIF, pre-commit, GitHub Action, PII, prompt injection, Claude Code, Codex, Cursor, Gemini CLI">
 <link rel="canonical" href="https://laaielichter.github.io/Gulliver/">
-<meta name="theme-color" content="#EDF1EF" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0F1C27" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f2e7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#f6f2e7" media="(prefers-color-scheme: dark)">
 <script type="application/ld+json">
 [
  {
@@ -112,7 +112,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='20' width='4' height='9' fill='%232F7D6D'/%3E%3Crect x='10' y='14' width='4' height='15' fill='%232F7D6D'/%3E%3Crect x='17' y='8' width='4' height='21' fill='%232F7D6D'/%3E%3Crect x='24' y='2' width='5' height='27' fill='none' stroke='%23B5781C' stroke-width='2' stroke-dasharray='3 2'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Familjen+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{
   --sea:#EDF1EF; --paper:#F8FAF9; --ink:#17283A; --ink-2:#4A5C6B; --rule:#C9D3CF;
@@ -254,55 +254,20 @@ footer{padding:40px 0 60px;border-top:1px solid var(--rule);color:var(--ink-2);f
 }
 @media (prefers-reduced-motion:reduce){.bar,.range{transition:none}}
 </style>
+<link rel="stylesheet" href="assets/atlas.css">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
 </head>
 <body>
+<noscript><style>.sample-controls,.tabs,.copy-panel,#copy{display:none}.panel[hidden]{display:block}</style></noscript>
 <div class="wrap">
-<header class="top">
-  <a class="brand" href="#top" aria-label="Gulliver home">
-    <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="20" width="4" height="9" fill="var(--tide)"/><rect x="10" y="14" width="4" height="15" fill="var(--tide)"/><rect x="17" y="8" width="4" height="21" fill="var(--tide)"/><rect x="24" y="2" width="5" height="27" fill="none" stroke="var(--giant)" stroke-width="2" stroke-dasharray="3 2"/></svg>
-    Gulliver
-  </a>
-  <nav aria-label="Sections">
-    <a href="#how">How it works</a>
-    <a href="#fix">Auto-fix</a>
-    <a href="#install">Install</a>
-    <a href="#compare">Compare</a>
-    <a href="#faq">FAQ</a>
-    <a href="https://github.com/laaielichter/Gulliver">GitHub</a>
-  </nav>
-</header>
-
-<main id="top">
-<div class="hero">
-  <div>
-    <a class="news" href="https://github.com/laaielichter/Gulliver/blob/main/CHANGELOG.md"><span>New in 0.3.0</span> A stronger read-only gate, guards for personal data and loops, and a PR review</a>
-    <h1>Test on tiny data before you run on giant data.</h1>
-    <p class="lede">Gulliver is an MCP server and CLI that gives AI agents a dress rehearsal for SQL. It estimates the cost, runs the query on 1%, 3% and 10% of the data, predicts the full run, and only lets it run inside your budget.</p>
-    <div class="install">
-      <code id="cmd">uvx gulliver-mcp</code>
-      <button type="button" id="copy" aria-live="polite">Copy</button>
-    </div>
-    <div class="cta">
-      <a class="gh" href="https://github.com/laaielichter/Gulliver">View on GitHub</a>
-      <a href="#install">Set up your agent</a>
-    </div>
-    <p class="works">Works with Claude Code, Codex, Cursor, Gemini CLI, Claude Desktop, VS Code, Windsurf and any MCP client. Open source, MIT, runs on your machine.</p>
-  </div>
-
-  <figure class="ladder" id="ladder" aria-labelledby="ladder-title">
-    <h2 id="ladder-title">A rehearsal of an agent's self-join</h2>
-    <p class="q mono">events a join events b on user_id, 5 million rows</p>
-    <div class="row"><span class="f">1%</span><div class="track"><div class="bar" style="--w:58%"></div></div><span class="n">2.5 M rows</span></div>
-    <div class="row"><span class="f">3%</span><div class="track"><div class="bar" style="--w:68%"></div></div><span class="n">7.6 M rows</span></div>
-    <div class="row"><span class="f">10%</span><div class="track"><div class="bar" style="--w:78%"></div></div><span class="n">25.5 M rows</span></div>
-    <div class="row pred"><span class="f">100%</span><div class="track"><div class="bar" style="--w:98%"></div><div class="range" style="left:95%;width:5%"></div></div><span class="n">≈ 257 M rows</span></div>
-    <p class="axis">Bars on a log scale. The 100% bar is a prediction, with its range. The real run returned 254,966,150 rows.</p>
-    <p class="verdict">The output is 51 times the biggest table: the join on <code>user_id</code> multiplies rows. Gulliver flags it before the full run, not after the bill.</p>
-  </figure>
-</div>
-
+<a class="skip-link" href="#top">Skip to content</a><header class="top"><a class="brand" href="./"><img src="logo.svg" width="38" height="38" alt="">Gulliver<span class="brand-marker" aria-hidden="true">/</span></a><nav aria-label="Sections"><a href="#how">The journey</a><a href="#fix">SQL fixes</a><a href="#tools">Toolkit</a><a class="nav-gh" href="https://github.com/laaielichter/Gulliver">GitHub <svg class="ui-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10"/></svg></a><a class="nav-cta" href="#install">Get started</a></nav></header>
+<main id="top"><div class="hero expedition-hero"><div class="hero-copy"><a class="edition" href="https://github.com/laaielichter/Gulliver/blob/main/CHANGELOG.md"><span></span> v0.3.0 · An expedition in better SQL <svg class="ui-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10"/></svg></a><p class="eyebrow">A DRESS REHEARSAL FOR YOUR AGENT’S SQL</p><h1>Small tests.<br>Big data.<br><em>Fewer surprises.</em></h1><p class="lede">Find out what your query will do before it meets your biggest tables. Estimate, rehearse on a sample, and go full scale within your budget.</p><div class="hero-actions"><a class="button primary" href="#install">Start your first rehearsal <svg class="ui-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10"/></svg></a><a class="text-link" href="#demo">See it in action <svg class="ui-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10"/></svg></a></div><div class="install"><span aria-hidden="true">$</span><code id="cmd">uvx gulliver-mcp</code><button type="button" id="copy">Copy</button></div><p class="hero-note">MCP + CLI · Runs on your machine · Open source · MIT</p></div>
+<figure class="rehearsal-card" id="ladder" aria-labelledby="ladder-title"><div class="card-topline"><span><i></i> FIELD NOTES / 001</span><span>RECORDED DEMO</span></div><div class="card-intro"><p class="eyebrow">KNOW THE SCALE BEFORE YOU TAKE THE LEAP</p><h2 id="ladder-title">One self-join.<br>A much bigger result.</h2><p>5 million input rows per table · DuckDB</p></div><div class="sample-controls" role="group" aria-label="Explore the recorded rehearsal"><button type="button" data-sample="1" aria-pressed="false">1%</button><button type="button" data-sample="3" aria-pressed="false">3%</button><button type="button" data-sample="10" aria-pressed="true">10%</button><button type="button" data-sample="100" aria-pressed="false">100% forecast</button></div><div class="sample-readout" role="status"><div><span id="sample-name">10% rehearsal</span><strong id="sample-rows">25,531,916</strong><span class="row-label">output rows</span></div><span id="sample-detail">4.0825 s · observed</span></div><svg class="growth-chart" viewBox="0 0 440 238" role="img" aria-labelledby="chart-title chart-desc"><title id="chart-title">Output rows at each rehearsal size</title><desc id="chart-desc">Linear scale from zero to 400 million rows. Observed output: 1 percent 2,538,840; 3 percent 7,625,948; 10 percent 25,531,916. The 100 percent forecast is 256,655,285 with range 179,658,700 to 384,982,928.</desc><line x1="52" y1="192.0" x2="421" y2="192.0" class="chart-grid"/><text x="40" y="195.0" class="chart-axis" text-anchor="end">0M</text><line x1="52" y1="147.0" x2="421" y2="147.0" class="chart-grid"/><text x="40" y="150.0" class="chart-axis" text-anchor="end">100M</text><line x1="52" y1="102.0" x2="421" y2="102.0" class="chart-grid"/><text x="40" y="105.0" class="chart-axis" text-anchor="end">200M</text><line x1="52" y1="57.0" x2="421" y2="57.0" class="chart-grid"/><text x="40" y="60.0" class="chart-axis" text-anchor="end">300M</text><line x1="52" y1="12.0" x2="421" y2="12.0" class="chart-grid"/><text x="40" y="15.0" class="chart-axis" text-anchor="end">400M</text><g data-chart-sample="1" data-selected="false" class="chart-sample observed"><rect x="72" y="190.858" width="44" height="1.142" rx="1" class="chart-column"/><text x="94" y="218" class="chart-label" text-anchor="middle">1%</text></g><g data-chart-sample="3" data-selected="false" class="chart-sample observed"><rect x="163" y="188.568" width="44" height="3.432" rx="1" class="chart-column"/><text x="185" y="218" class="chart-label" text-anchor="middle">3%</text></g><g data-chart-sample="10" data-selected="true" class="chart-sample observed"><rect x="254" y="180.511" width="44" height="11.489" rx="1" class="chart-column"/><text x="276" y="218" class="chart-label" text-anchor="middle">10%</text></g><g data-chart-sample="100" data-selected="false" class="chart-sample prediction"><rect x="345" y="76.505" width="44" height="115.495" rx="1" class="chart-column"/><rect x="338" y="18.758" width="58" height="92.396" class="forecast-band"/><path d="M367 18.758V111.154M358 18.758h18M358 111.154h18" class="forecast-range"/><text x="367" y="218" class="chart-label" text-anchor="middle">100%</text></g></svg><div class="chart-legend"><span><i class="observed-key"></i> Observed</span><span><i class="forecast-key"></i> Forecast + range</span><span>Linear scale</span></div><div class="forecast-summary"><div><span>AT FULL SCALE</span><b>≈ 256.7M rows</b></div><p>Estimated range: 179.7M–385.0M.<br>The real full run returned <b>254,966,150</b>.</p></div><figcaption>This recorded example illustrates row growth. Estimates vary by query, data and engine.</figcaption></figure></div>
+<div class="engine-strip"><span>SMALL REHEARSALS. FAMILIAR WAREHOUSES.</span><b>DuckDB</b><b>Postgres</b><b>BigQuery <small>beta</small></b><b>Snowflake <small>beta</small></b></div>
+<section class="lead-in"><div><p class="eyebrow">BECAUSE “IT WORKS” IS ONLY THE FIRST QUESTION</p><h2 class="sec">An answer is good.<br><em>An informed run is better.</em></h2></div><p>Agents can write SQL that works on a tiny table and grows into an expensive surprise. Give yours a map of the data, a rehearsal of the query, and a clear next step.</p></section>
 <section id="how" aria-labelledby="how-h">
-  <h2 class="sec" id="how-h">Five steps between your agent and the warehouse</h2>
+  <p class="eyebrow">FROM LILLIPUT TO THE LAND OF GIANTS</p><h2 class="sec" id="how-h">A small step before<br>the big leap.</h2>
   <p class="sub">Every answer carries a <code>status</code> and a <code>next_step</code>, so even a small model knows what to do. Limits are set by a human in <code>gulliver.toml</code>; the agent cannot raise them or approve itself.</p>
   <ol class="steps">
     <li><span class="k">inspect</span><h3>See what is big</h3><p>Rows, bytes, partitions and columns, from metadata only. Free.</p></li>
@@ -313,8 +278,8 @@ footer{padding:40px 0 60px;border-top:1px solid var(--rule);color:var(--ink-2);f
   </ol>
 </section>
 
-<section aria-labelledby="demo-h">
-  <h2 class="sec" id="demo-h">The real CLI, on a real table</h2>
+<section id="demo" aria-labelledby="demo-h">
+  <p class="eyebrow">THE EXPEDITION, RECORDED</p><h2 class="sec" id="demo-h">Real commands.<br>Real data. A clearer picture.</h2>
   <p class="sub">Recorded on the 5-million-row demo database that <code>gulliver demo</code> builds in seconds. Nothing in this recording is staged.</p>
   <div class="demo"><img src="demo.svg" alt="Terminal recording: Gulliver inspects the demo tables, rehearses a self-join on 1%, 3% and 10% and predicts the size of the full result, then rewrites a DATE(ts) filter into a range on ts with the same rows." loading="lazy" width="1292" height="458"></div>
   <p class="cap">Script: <a href="https://github.com/laaielichter/Gulliver/blob/main/docs/demo.sh">docs/demo.sh</a></p>
@@ -323,7 +288,7 @@ footer{padding:40px 0 60px;border-top:1px solid var(--rule);color:var(--ink-2);f
 <section id="fix" aria-labelledby="fix-h">
   <div class="fix">
     <div>
-      <h2 class="sec" id="fix-h">It fixes the SQL, and says what changed</h2>
+      <p class="eyebrow">TAKE A BETTER ROUTE</p><h2 class="sec" id="fix-h">Less work for the warehouse.<br>Clarity about what changed.</h2>
       <p class="sub">Small models read a lint warning and still write the slow query. <code>gulliver_fix</code> rewrites it for them and labels every change. "Same rows" is only promised when Gulliver has checked the column type on your connection.</p>
       <ul class="guar">
         <li><code>same</code> exactly the same rows. The default.</li>
@@ -346,25 +311,25 @@ footer{padding:40px 0 60px;border-top:1px solid var(--rule);color:var(--ink-2);f
 </section>
 
 <section id="install" aria-labelledby="install-h">
-  <h2 class="sec" id="install-h">Add it to your agent</h2>
+  <p class="eyebrow">YOUR NEXT QUERY STARTS HERE</p><h2 class="sec" id="install-h">Bring your agent.<br>Give it a little foresight.</h2>
   <p class="sub">Point it at a warehouse with <code>--dsn</code>, or at a <code>gulliver.toml</code> with connections and budgets. To try it without a warehouse, run <code>gulliver demo</code>.</p>
   <div class="tabs" role="tablist" aria-label="Agent">
     <button role="tab" aria-selected="true" aria-controls="p-claude" id="t-claude">Claude Code</button>
     <button role="tab" aria-selected="false" aria-controls="p-codex" id="t-codex" tabindex="-1">Codex CLI</button>
-    <button role="tab" aria-selected="false" aria-controls="p-json" id="t-json" tabindex="-1">Claude Desktop, Cursor, Windsurf, Gemini CLI</button>
+    <button role="tab" aria-selected="false" aria-controls="p-json" id="t-json" tabindex="-1">Other MCP clients</button>
     <button role="tab" aria-selected="false" aria-controls="p-vscode" id="t-vscode" tabindex="-1">VS Code</button>
     <button role="tab" aria-selected="false" aria-controls="p-cli" id="t-cli" tabindex="-1">CLI only</button>
   </div>
-  <div class="panel" role="tabpanel" id="p-claude" aria-labelledby="t-claude"><pre><code>claude mcp add gulliver -- uvx gulliver-mcp --dsn /abs/path/data.duckdb
+  <div class="panel" role="tabpanel" id="p-claude" aria-labelledby="t-claude"><button class="copy-panel" type="button" data-copy-panel="p-claude">Copy setup</button><pre><code>claude mcp add gulliver -- uvx gulliver-mcp --dsn /abs/path/data.duckdb
 
 # or as a plugin, with the skill included
 /plugin marketplace add laaielichter/Gulliver
 /plugin install gulliver@gulliver</code></pre></div>
-  <div class="panel" role="tabpanel" id="p-codex" aria-labelledby="t-codex" hidden><pre><code># ~/.codex/config.toml
+  <div class="panel" role="tabpanel" id="p-codex" aria-labelledby="t-codex" hidden><button class="copy-panel" type="button" data-copy-panel="p-codex">Copy setup</button><pre><code># ~/.codex/config.toml
 [mcp_servers.gulliver]
 command = "uvx"
 args = ["gulliver-mcp", "--config", "/abs/path/gulliver.toml"]</code></pre></div>
-  <div class="panel" role="tabpanel" id="p-json" aria-labelledby="t-json" hidden><pre><code>{
+  <div class="panel" role="tabpanel" id="p-json" aria-labelledby="t-json" hidden><button class="copy-panel" type="button" data-copy-panel="p-json">Copy setup</button><pre><code>{
   "mcpServers": {
     "gulliver": {
       "command": "uvx",
@@ -372,7 +337,7 @@ args = ["gulliver-mcp", "--config", "/abs/path/gulliver.toml"]</code></pre></div
     }
   }
 }</code></pre><p>Prefer npm? Use <code>"command": "npx", "args": ["-y", "gulliver-mcp", ...]</code>. It needs uv on the machine.</p></div>
-  <div class="panel" role="tabpanel" id="p-vscode" aria-labelledby="t-vscode" hidden><pre><code>// .vscode/mcp.json
+  <div class="panel" role="tabpanel" id="p-vscode" aria-labelledby="t-vscode" hidden><button class="copy-panel" type="button" data-copy-panel="p-vscode">Copy setup</button><pre><code>// .vscode/mcp.json
 {
   "servers": {
     "gulliver": {
@@ -382,14 +347,14 @@ args = ["gulliver-mcp", "--config", "/abs/path/gulliver.toml"]</code></pre></div
     }
   }
 }</code></pre></div>
-  <div class="panel" role="tabpanel" id="p-cli" aria-labelledby="t-cli" hidden><pre><code>pip install gulliver-mcp
+  <div class="panel" role="tabpanel" id="p-cli" aria-labelledby="t-cli" hidden><button class="copy-panel" type="button" data-copy-panel="p-cli">Copy setup</button><pre><code>pip install gulliver-mcp
 gulliver demo
 gulliver --dsn gulliver_demo.duckdb preflight "select country, count(*) from users group by 1"
 gulliver tools --format openai   # function definitions for any API</code></pre></div>
 </section>
 
-<section aria-labelledby="tools-h">
-  <h2 class="sec" id="tools-h">Also for the pipeline around the query</h2>
+<section id="tools" aria-labelledby="tools-h">
+  <p class="eyebrow">TOOLS FOR THE REST OF THE JOURNEY</p><h2 class="sec" id="tools-h">A bigger picture<br>of your pipeline.</h2>
   <p class="sub">Sixteen MCP tools in total, each also a CLI command with <code>--json</code>. <code>--toolset core</code> loads only the eight query tools.</p>
   <div class="tools">
     <div><code>gulliver_impact</code><span>What breaks if you change or drop a column: column-level lineage over SQL models or a dbt manifest.</span></div>
@@ -426,7 +391,7 @@ gulliver tools --format openai   # function definitions for any API</code></pre>
 </section>
 
 <section id="faq" aria-labelledby="faq-h">
-  <h2 class="sec" id="faq-h">Questions people ask</h2>
+  <p class="eyebrow">BEFORE YOU SET OFF</p><h2 class="sec" id="faq-h">Good questions.<br>Useful answers.</h2>
   <p class="sub">Short answers. The <a href="https://github.com/laaielichter/Gulliver#readme">README</a> has the details.</p>
   <div class="faq">
     <details><summary>Does Gulliver send my data or my SQL anywhere?</summary><p>No. It runs on your machine and only talks to the databases you configure. Receipts, the spend ledger and approvals are JSON files in <code>./.gulliver/</code>. There is no telemetry.</p></details>
@@ -459,11 +424,11 @@ gulliver tools --format openai   # function definitions for any API</code></pre>
         <a href="https://github.com/laaielichter/Gulliver/issues/new/choose">Share a case</a>
         <a href="https://github.com/laaielichter/Gulliver/blob/main/CONTRIBUTING.md">Contributing guide</a>
       </div>
-      <a href="https://github.com/laaielichter/Gulliver/graphs/contributors"><img src="https://contrib.rocks/image?repo=laaielichter/Gulliver" alt="People who contributed to Gulliver" loading="lazy"></a>
+      <p class="credit-link"><a href="https://github.com/laaielichter/Gulliver/graphs/contributors">Meet the contributors <svg class="ui-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10"/></svg></a></p>
     </div>
   </div>
 </section>
-</main>
+<section class="closing"><p class="eyebrow">MADE BY LAAIELICHTER. BUILT IN THE OPEN.</p><h2>Your data can be giant.<br><em>Your first test can be tiny.</em></h2><p>Give your next query a rehearsal.</p><div class="closing-actions"><a class="button primary" href="#install">Let’s start small <svg class="ui-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M5 15 15 5M5 5h10v10"/></svg></a><a class="button secondary" href="https://github.com/laaielichter/Gulliver">Star on GitHub <svg class="ui-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="m10 2 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.6-4.8 2.6.9-5.4L2.2 7.7l5.4-.8Z"/></svg></a></div><p class="closing-note">Find it useful? A GitHub star is always welcome.</p></section></main>
 
 <footer>
   <span>Gulliver is MIT licensed. Built by <a href="https://github.com/laaielichter">laaielichter</a>.</span>
@@ -471,31 +436,7 @@ gulliver tools --format openai   # function definitions for any API</code></pre>
 </footer>
 </div>
 
-<script>
-(function(){
-  var copy=document.getElementById('copy');
-  copy.addEventListener('click',function(){
-    var t=document.getElementById('cmd').textContent;
-    var done=function(){copy.textContent='Copied';setTimeout(function(){copy.textContent='Copy'},1600)};
-    if(navigator.clipboard){navigator.clipboard.writeText(t).then(done,function(){})}
-  });
-  var ladder=document.getElementById('ladder');
-  requestAnimationFrame(function(){requestAnimationFrame(function(){ladder.classList.add('go')})});
-  var tabs=[].slice.call(document.querySelectorAll('[role=tab]'));
-  function select(tab){
-    tabs.forEach(function(t){
-      var on=t===tab;t.setAttribute('aria-selected',on);t.tabIndex=on?0:-1;
-      document.getElementById(t.getAttribute('aria-controls')).hidden=!on;
-    });
-  }
-  tabs.forEach(function(t,i){
-    t.addEventListener('click',function(){select(t)});
-    t.addEventListener('keydown',function(e){
-      var d=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;
-      if(d){var n=tabs[(i+d+tabs.length)%tabs.length];select(n);n.focus();}
-    });
-  });
-})();
-</script>
+<script type="application/json" id="rehearsal-data">{"source": "Recorded DuckDB rehearsal from README.md and docs/demo.sh", "inputRows": 5000000, "sql": "select a.event_id, b.event_id from events a join events b on a.user_id = b.user_id", "samples": [{"key": "1", "rows": 2538840, "seconds": 0.4955}, {"key": "3", "rows": 7625948, "seconds": 1.2153}, {"key": "10", "rows": 25531916, "seconds": 4.0825}], "prediction": {"rows": 256655285, "low": 179658700, "high": 384982928, "confidence": "high"}, "actualRows": 254966150}</script>
+<script src="assets/site.js" defer></script>
 </body>
 </html>

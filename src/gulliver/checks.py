@@ -6,6 +6,7 @@ the same budget gate as every other query.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -46,16 +47,31 @@ def parse_spec(unique: list[str] | None = None, not_null: list[str] | None = Non
             raise ValueError(f"accepted needs col=a|b|c, got '{a}'")
         spec.accepted[col.strip()] = [v for v in values.split("|")]
     for r in ranges or []:
-        col, _, bounds = r.partition("=")
-        lo, _, hi = bounds.partition(":")
-        if not _:
+        col, sep, bounds = r.partition("=")
+        if not sep or ":" not in bounds:
             raise ValueError(f"range needs col=min:max (either side may be empty), got '{r}'")
-        spec.ranges[col.strip()] = (float(lo) if lo.strip() else None, float(hi) if hi.strip() else None)
+        column = col.strip()
+        lo_text, _, hi_text = bounds.partition(":")
+        lo = _range_bound(column, lo_text) if lo_text.strip() else None
+        hi = _range_bound(column, hi_text) if hi_text.strip() else None
+        if lo is not None and hi is not None and lo > hi:
+            raise ValueError(f"range for {column!r} has min {lo_text.strip()} > max {hi_text.strip()}")
+        spec.ranges[column] = (lo, hi)
     for f in fresh or []:
         col, _, age = f.partition("=")
         parse_period(age)  # validate early
         spec.fresh[col.strip()] = age.strip()
     return spec
+
+
+def _range_bound(column: str, text: str) -> float:
+    try:
+        number = float(text)
+    except ValueError as exc:
+        raise ValueError(f"range for {column!r} needs numbers, got {text.strip()!r}") from exc
+    if not math.isfinite(number):
+        raise ValueError(f"range for {column!r} needs finite numbers, got {text.strip()!r}")
+    return number
 
 
 def _lit(value: str) -> str:

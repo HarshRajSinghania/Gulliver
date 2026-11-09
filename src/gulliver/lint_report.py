@@ -53,8 +53,8 @@ RULE_DOCS: dict[str, tuple[str, str, str, str]] = {
               "Add PARTITION BY a key.", "none"),
     "GV012": ("info", "NOT IN (subquery) returns nothing when the subquery has a NULL, and often plans badly.",
               "Use NOT EXISTS.", "mode=all (same rows unless the subquery returns NULL)"),
-    "GV013": ("info", "LIKE / ILIKE with a leading wildcard ('%x') cannot use an index or min/max statistics, so it "
-                      "scans every value.",
+    "GV013": ("info", "LIKE / ILIKE with a leading wildcard (`%` or `_`) cannot use an index or min/max statistics, "
+                      "so it scans every value.",
               "Filter on another (partition or indexed) column first, or use full-text / n-gram search.", "none"),
     "GV014": ("info", "An output column is personal data or a secret (by name, through aliases/CTEs/SELECT *, or "
                       "by earlier value tags). info for personal data or a masked secret, warn for a secret that "
@@ -71,6 +71,9 @@ RULE_DOCS: dict[str, tuple[str, str, str, str]] = {
               "(DuckDB); check the engine's sampling semantics.", "none"),
     "GV017": ("warn", "A high OFFSET produces and discards many rows, and every next page costs more.",
               "Use keyset pagination (WHERE id > <last id seen> ORDER BY id LIMIT N) instead of OFFSET.", "none"),
+    "GV018": ("info", "A subquery counts every matching row only to compare the count with zero. EXISTS can stop "
+                      "at the first match, and Postgres does not turn one into the other.",
+              "Use EXISTS (SELECT 1 FROM ...), or NOT EXISTS for `= 0` and `< 1`.", "none"),
     "GV900": ("warn", "Gulliver could not parse a statement (dialect, or dbt Jinja it cannot render), so it was not "
                       "checked. Only in file lint.", "Set the dialect, or simplify the Jinja.", "none"),
     "GV901": ("warn", "A `gulliver: ignore` comment that ignores nothing: always for an unreadable rule list "
@@ -104,6 +107,27 @@ def render_rules_text() -> str:
         lines.append(f"{r['rule']:6} {r['name']:27} {r['default_severity']:8} {r['description']}")
         if r["autofix"] != "none":
             lines.append(f"{'':43} autofix: {r['autofix']}")
+    return "\n".join(lines)
+
+
+# Optional richer Name / Severity cells for the README / --format markdown table.
+# Every rule in rules() still appears; missing keys fall back to name + default_severity.
+RULE_MARKDOWN: dict[str, tuple[str, str]] = {
+    "GV003": ("cartesian-join", "error (no condition) / warn (CROSS JOIN)"),
+    "GV013": ("leading-wildcard-like (`%` or `_`)", "info"),
+    "GV014": ("sensitive-column-in-output",
+              "info (personal data, masked secret) / warn (unmasked secret)"),
+    "GV900": ("parse-error (file lint only)", "warn"),
+    "GV901": ("unused-ignore (an unreadable or unused `gulliver: ignore`)", "warn"),
+}
+
+
+def render_rules_markdown() -> str:
+    """Markdown table of every rule: `| Rule | Name | Severity |` (for README and --format markdown)."""
+    lines = ["| Rule | Name | Severity |", "|---|---|---|"]
+    for r in rules():
+        name, severity = RULE_MARKDOWN.get(r["rule"], (r["name"], r["default_severity"]))
+        lines.append(f"| {r['rule']} | {name} | {severity} |")
     return "\n".join(lines)
 
 
@@ -448,5 +472,11 @@ def cli_fix(args: Any) -> int:
 
 
 def cli_rules(args: Any) -> int:
-    print(json.dumps(rules_result(), indent=2) if args.json else render_rules_text())
+    fmt = getattr(args, "format", None) or "text"
+    if args.json or fmt == "json":
+        print(json.dumps(rules_result(), indent=2))
+    elif fmt == "markdown":
+        print(render_rules_markdown())
+    else:
+        print(render_rules_text())
     return 0
