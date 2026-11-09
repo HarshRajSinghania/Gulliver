@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import pytest
 
+from gulliver.calibration import calibration
 from gulliver.cli import main
 from gulliver.config import load_settings
 from gulliver.store import Store, iso, now_utc
@@ -101,3 +102,15 @@ def test_empty_calibration_has_actionable_next_step(state, capsys):
     assert (data["status"], data["runs"], data["no_range"]) == ("ok", 0, 0)
     assert "rehearse and run" in data["next_step"]
     assert not state.exists()
+
+
+def test_calibration_refuses_a_window_below_one_day(state, capsys):
+    for days in (0, -3):
+        res = calibration(load_settings(), days=days)
+        assert res["status"] == "error" and "--days" in res["error"] and res["next_step"]
+        assert main(["calibration", "--days", str(days), "--json"]) == 1
+        assert json.loads(capsys.readouterr().out)["status"] == "error"
+        assert main(["calibration", "--days", str(days)]) == 1
+        assert "--days" in capsys.readouterr().out
+    assert calibration(load_settings(), days=1)["status"] == "ok"
+    assert main(["calibration", "--days", "1", "--json"]) == 0
