@@ -16,8 +16,11 @@ import math
 import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
+
+if TYPE_CHECKING:
+    from .checks import CheckConfig
 
 try:  # Python 3.11+
     import tomllib  # type: ignore[import-not-found]
@@ -164,7 +167,7 @@ class Settings:
     budget: Budget
     state_dir: Path
     approval_channel: str = "cli"   # [approval] channel: "cli" (default) or "elicitation" (MCP client asks the human)
-    checks: dict[str, Any] = field(default_factory=dict)
+    checks: dict[str, CheckConfig] = field(default_factory=dict)
 
     def connection(self, name: str | None = None) -> Connection:
         key = name or self.default_connection

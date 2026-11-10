@@ -527,6 +527,8 @@ gulliver check events --samples 5           # flags add to or override configure
 gulliver check --all                        # run all configured sections; exit code 4 if any fails
 ```
 
+`--all` runs each configured check as defined; it accepts `-c`/`--connection` and `--samples`, but takes no check flags (`--where`, `--unique`, etc.).
+
 Or pass checks directly on the command line:
 
 ```bash

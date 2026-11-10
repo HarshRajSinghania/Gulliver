@@ -440,7 +440,7 @@ unique = ["user_id"]
     assert all_res["status"] == "fail"
     assert all_res["total_targets"] == 3
     assert all_res["failed_targets"] == 1
-    assert "1 of 3 target(s) failed" in all_res["next_step"]
+    assert "1 failed of 3 target(s)" in all_res["next_step"]
 
     statuses = {t["name"]: t["status"] for t in all_res["targets"]}
     assert statuses == {"ev": "ok", "usr": "ok", "bad": "fail"}
@@ -484,6 +484,17 @@ min_rows = 1000
     assert exc_info.value.code == 2
     assert "do not pass a target when using --all" in capsys.readouterr().err
 
+    # Passing --all with check flags is refused
+    with pytest.raises(SystemExit) as exc_info:
+        main(["check", "--all", "--where", "1=0"])
+    assert exc_info.value.code == 2
+    assert "do not pass check flags" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit) as exc_info:
+        main(["check", "--all", "--unique", "foo"])
+    assert exc_info.value.code == 2
+    assert "do not pass check flags" in capsys.readouterr().err
+
     # check without target and without --all is refused
     with pytest.raises(SystemExit) as exc_info:
         main(["check"])
@@ -496,3 +507,32 @@ min_rows = 1000
     out = capsys.readouterr().out
     assert "check" in out and "target" in out and "status" in out
     assert "ev" in out and "events" in out and "ok" in out
+
+
+def test_check_all_target_error_summary(demo_db, tmp_path, monkeypatch):
+    from gulliver.config import load_settings
+
+    db_path = demo_db.replace("\\", "/")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "gulliver.toml").write_text(
+        f'''default_connection = "demo"
+[connections.demo]
+engine = "duckdb"
+path = '{db_path}'
+
+[checks.good]
+target = "events"
+unique = ["event_id"]
+
+[checks.bad_col]
+target = "events"
+unique = ["nonexistent_col_123"]
+'''
+    )
+    s = load_settings()
+    all_res = features.check_all(s)
+    assert all_res["status"] == "error"
+    assert all_res["total_targets"] == 2
+    assert all_res["failed_targets"] == 0
+    assert all_res["errored_targets"] == 1
+    assert "1 errored, 0 failed of 2 target(s)" in all_res["next_step"]

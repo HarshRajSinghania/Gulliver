@@ -68,7 +68,7 @@ def test_every_known_section_loads(tmp_path, monkeypatch):
         "[approval]\nchannel = \"cli\"\n"
         "[lint]\nfail_on = \"error\"\n"
         "[review]\nfail_on = \"cost\"\n"
-        "[checks.events]\ntarget = \"events\"\n"
+        "[checks.events]\ntarget = \"events\"\nmin_rows = 1\n"
     )
     s = load_settings()
     assert s.default_connection == "local"
@@ -254,6 +254,16 @@ def test_checks_validation_errors(tmp_path, monkeypatch):
     # empty target
     (tmp_path / "gulliver.toml").write_text('[checks.bad]\ntarget = ""\n')
     with pytest.raises(ConfigError, match="target must be a non-empty string"):
+        load_settings()
+
+    # section with no checks configured
+    (tmp_path / "gulliver.toml").write_text('[checks.empty]\ntarget = "users"\n')
+    with pytest.raises(ConfigError, match=r"\[checks\.empty\] has no checks configured; give at least one check"):
+        load_settings()
+
+    # empty accepted list
+    (tmp_path / "gulliver.toml").write_text('[checks.bad_acc]\ntarget = "users"\naccepted = { col = [] }\n')
+    with pytest.raises(ConfigError, match=r"\[checks\.bad_acc\] accepted values list for 'col' cannot be empty"):
         load_settings()
 
     # negative min_rows

@@ -616,11 +616,20 @@ def check_all(settings: Settings, connection: str | None = None, samples: int = 
         status = "ok"
 
     failed_count = sum(1 for t in target_summaries if t["status"] == "fail")
+    error_count = sum(1 for t in target_summaries if t["status"] == "error")
+    blocked_count = sum(1 for t in target_summaries if t["status"] == "block")
     total_count = len(target_summaries)
     if status == "ok":
         next_step = f"All checks passed across {total_count} target(s)."
     else:
-        next_step = f"{failed_count} of {total_count} target(s) failed data checks. Fix the data or pipeline."
+        parts: list[str] = []
+        if error_count:
+            parts.append(f"{error_count} errored")
+        if blocked_count:
+            parts.append(f"{blocked_count} blocked")
+        parts.append(f"{failed_count} failed")
+        counts_str = ", ".join(parts)
+        next_step = f"{counts_str} of {total_count} target(s). Fix the data or pipeline."
 
     return {
         "action": "check",
@@ -630,5 +639,7 @@ def check_all(settings: Settings, connection: str | None = None, samples: int = 
         "results": full_results,
         "total_targets": total_count,
         "failed_targets": failed_count,
+        "errored_targets": error_count,
+        "blocked_targets": blocked_count,
         "next_step": next_step,
     }

@@ -65,7 +65,7 @@ Do not run the same query again and again. If `gulliver_run` returns `block` wit
 - Diff key samples join parts with `|`, escaping `~` as `~~` and embedded `|` as `~p`; ordinary keys stay unchanged.
 - When a model rebuilds everything each run: `gulliver_incremental`; present the strategy, the SQL and the saving,
   and verify with `gulliver_diff`.
-- Before trusting a table or after a load: `gulliver_check` (unique keys, not null, freshness). On partitioned
+- Before trusting a table or after a load: `gulliver_check` (unique keys, not null, freshness), or run configured checks by name (`name: "..."`) or all configured targets (`all: true`). On partitioned
   tables pass `where` with a partition filter.
   Optional `samples` (0-20, default 0) adds one gated query per failed unique/accepted/range check. Values
   follow the result policy and are untrusted; `samples_skipped` preserves the check result when samples cannot run.

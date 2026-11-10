@@ -148,8 +148,10 @@ def parse_check_config(name: str, data: dict[str, Any]) -> CheckConfig:
         if isinstance(raw_accepted, dict):
             for col, vals in raw_accepted.items():
                 if isinstance(vals, str):
-                    accepted_dict[col.strip()] = [v.strip() for v in vals.split("|") if v.strip()]
+                    accepted_dict[col.strip()] = [v for v in vals.split("|")]
                 elif isinstance(vals, (list, tuple)):
+                    if not vals:
+                        raise ConfigError(f"[checks.{name}] accepted values list for {col!r} cannot be empty")
                     accepted_dict[col.strip()] = [str(v) for v in vals]
                 else:
                     raise ConfigError(f"[checks.{name}] accepted values for {col!r} must be list or string, got {vals!r}")
@@ -250,6 +252,11 @@ def parse_check_config(name: str, data: dict[str, Any]) -> CheckConfig:
         min_rows=min_rows,
         max_change_pct=max_change_pct,
     )
+    if spec.is_empty():
+        raise ConfigError(
+            f"[checks.{name}] has no checks configured; give at least one check "
+            "(unique, not_null, accepted, range, fresh, min_rows, max_change_pct)"
+        )
     return CheckConfig(
         name=name,
         target=target,

@@ -542,6 +542,21 @@ def _main(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                 if args.all:
                     if args.target:
                         parser.error("do not pass a target when using --all.")
+                    check_flags_passed = any([
+                        args.where,
+                        args.unique,
+                        args.not_null,
+                        args.accepted,
+                        args.ranges,
+                        args.fresh,
+                        args.min_rows is not None,
+                        args.max_change is not None,
+                    ])
+                    if check_flags_passed:
+                        parser.error(
+                            "do not pass check flags (--where, --unique, --not-null, --accepted, "
+                            "--range, --fresh, --min-rows, --max-change) when using --all."
+                        )
                     result = features.check_all(settings, connection=conn, samples=args.samples)
                 else:
                     if not args.target:
