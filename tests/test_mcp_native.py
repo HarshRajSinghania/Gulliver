@@ -548,8 +548,9 @@ def test_mcp_port_out_of_range(capsys):
 def test_cli_mcp_port_out_of_range(capsys):
     """The gulliver mcp subcommand forwards the same check."""
     for bad in ["-1", "70000"]:
-        code = main(["mcp", "--http", "--port", bad])
-        assert code == 2
+        with pytest.raises(SystemExit) as exc:
+            main(["mcp", "--http", "--port", bad])
+        assert exc.value.code == 2
         err = capsys.readouterr().err
         assert "port must be 0-65535" in err
 
