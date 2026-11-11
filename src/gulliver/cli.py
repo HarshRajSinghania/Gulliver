@@ -38,6 +38,14 @@ def _write_output(args: argparse.Namespace, text: str | None) -> None:
 def _print_human(result: dict[str, Any]) -> None:
     from .receipts import render_markdown
 
+    if result.get("all") and "targets" in result:
+        print(f"{'check':20} {'target':25} {'status':8} {'failed':>6}  {'receipt':12}  next_step")
+        for t in result["targets"]:
+            rec = t.get("receipt_id") or ""
+            step = t.get("next_step", "")
+            print(f"{t['name'][:20]:20} {t['target'][:25]:25} {t['status']:8} {t['failed']:>6}  {rec:12}  {step}")
+        print(f"\nnext: {result.get('next_step', '')}")
+        return
     if "markdown" in result:
         print(result["markdown"])
         return
@@ -320,7 +328,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-savings", action="store_true", help="Do not query the source to measure savings")
 
     p = sub.add_parser("check", help="Data quality checks in one scan (exit code 4 when a check fails)")
-    p.add_argument("target", help="Table name or a SELECT")
+    p.add_argument("target", nargs="?", default=None,
+                   help="Table name, SELECT, or configured check name (omit when using --all)")
+    p.add_argument("--all", action="store_true", help="Run all data checks configured in gulliver.toml")
     p.add_argument("--where")
     p.add_argument("--unique", action="append", help="Key that must be unique; 'a,b' for composite (repeatable)")
     p.add_argument("--not-null", action="append", help="Comma-separated columns (repeatable)")
@@ -528,11 +538,33 @@ def _main(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
                                               time_column=args.time_column, unique_key=csv(args.unique_key),
                                               period=args.period, lookback=args.lookback,
                                               estimate_savings=not args.no_savings)
-            else:
-                result = features.check(settings, args.target, connection=conn, where=args.where,
-                                        unique=args.unique, not_null=args.not_null, accepted=args.accepted,
-                                        ranges=args.ranges, fresh=args.fresh, min_rows=args.min_rows,
-                                        max_change_pct=args.max_change, samples=args.samples)
+            elif args.command == "check":
+                if args.all:
+                    if args.target:
+                        parser.error("do not pass a target when using --all.")
+                    check_flags_passed = any([
+                        args.where,
+                        args.unique,
+                        args.not_null,
+                        args.accepted,
+                        args.ranges,
+                        args.fresh,
+                        args.min_rows is not None,
+                        args.max_change is not None,
+                    ])
+                    if check_flags_passed:
+                        parser.error(
+                            "do not pass check flags (--where, --unique, --not-null, --accepted, "
+                            "--range, --fresh, --min-rows, --max-change) when using --all."
+                        )
+                    result = features.check_all(settings, connection=conn, samples=args.samples)
+                else:
+                    if not args.target:
+                        parser.error("provide a target table/query, a configured check name, or --all.")
+                    result = features.check(settings, args.target, connection=conn, where=args.where,
+                                            unique=args.unique, not_null=args.not_null, accepted=args.accepted,
+                                            ranges=args.ranges, fresh=args.fresh, min_rows=args.min_rows,
+                                            max_change_pct=args.max_change, samples=args.samples)
             return _emit(result, args.json)
         if args.command == "calibration":
             from .calibration import calibration, render_calibration

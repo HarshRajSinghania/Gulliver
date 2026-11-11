@@ -97,7 +97,7 @@ def _runaway():
 def status(settings: Settings) -> dict[str, Any]:
     spent = _store(settings).spent_today()
     budget = settings.budget
-    return {
+    res = {
         "status": "ok",
         "version": __version__,
         "connections": [c.public_dict() for c in settings.connections.values()],
@@ -109,6 +109,9 @@ def status(settings: Settings) -> dict[str, Any]:
         "workflow": WORKFLOW,
         "next_step": "Call gulliver_inspect to see which tables are big, then gulliver_preflight your SQL.",
     }
+    if settings.checks:
+        res["checks"] = list(settings.checks.keys())
+    return res
 
 
 # -- inspect ---------------------------------------------------------------------------

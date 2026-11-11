@@ -505,6 +505,32 @@ turn fewer rows into less money. Prove the result with `gulliver diff`.
 
 ### Check: data quality in one scan
 
+Define checks once in `gulliver.toml` under `[checks.<name>]`, and run them by name or run all configured targets at once:
+
+```toml
+[checks.events]
+target = "events"            # table or SELECT; defaults to the section name
+connection = "local"         # optional
+where = "ts >= current_date - 7"
+unique = ["event_id"]        # composite key: ["event_id", ["user_id", "session_id"]]
+not_null = ["user_id", "amount"]
+accepted = { event_type = ["view", "click", "cart", "buy"] }
+range = { amount = [0, 10000] }
+fresh = { ts = "24h" }
+min_rows = 1000
+max_change_pct = 30
+```
+
+```bash
+gulliver check events                       # run configured checks for 'events'
+gulliver check events --samples 5           # flags add to or override configured checks
+gulliver check --all                        # run all configured sections; exit code 4 if any fails
+```
+
+`--all` runs each configured check as defined; it accepts `-c`/`--connection` and `--samples`, but takes no check flags (`--where`, `--unique`, etc.).
+
+Or pass checks directly on the command line:
+
 ```bash
 gulliver check events --unique event_id --not-null user_id,amount \
   --accepted "event_type=view|click|cart|buy" --range "amount=0:10000" --fresh ts=24h --max-change 30
