@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Refuse inspect limits outside 1-200 and sensitive value scans outside 0-1000 instead of silently clamping them (#97). A named table still ignores the listing limit.
+- Data quality checks in `gulliver.toml` under `[checks.<name>]`: run them by name with `gulliver check NAME` or run all configured targets in CI with `gulliver check --all` (exits 4 if any check fails) (#80).
 - `gulliver rules --format markdown|json` prints a generated rule table (markdown) or the same JSON as `--json`; the README Scale lint rules table is generated from it (#18).
 - `gulliver spend -o/--output PATH` and `gulliver top -o/--output PATH` write the report as UTF-8 and print a one-line confirmation (#19).
 - Opt-in `check --samples N` / MCP `samples` (0-20) reports guarded offending values and row counts for failed unique, accepted-values and range checks. Each extra query is budget-gated and logged; blocked or failed samples leave the check result intact (#48, #49).
