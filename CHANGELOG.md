@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `impact`, `lineage` and `drift` refuse `--models` pointing to a folder with no `.sql` files with `status: error` and a `next_step` instead of reporting zero models or empty impact (#122).
+
 ## 0.4.0 - 2026-11-11
 
 Data checks you define once in `gulliver.toml` and run in CI, a lint baseline for existing repos, rehearsal
